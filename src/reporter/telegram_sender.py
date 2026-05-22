@@ -79,6 +79,7 @@ class TelegramSender:
                 count += 1
             msg_lines.append("")
 
-        msg_lines.append("💻 상세 조건 필터링 및 전체 누적 공고 조회가 필요하신 경우, 대시보드 리포트(index.html)를 로컬 더블 클릭하여 편리하게 검색해 보실 수 있습니다.")
+        msg_lines.append("💻 상세 필터 및 전체 누적 공고 조회가 필요하신 경우, GitHub 모바일 앱 또는 웹 브라우저를 통해 실시간으로 확인하실 수 있습니다.")
+        msg_lines.append("👉 <a href='https://github.com/laonH163/HR_test/blob/main/index.html'>GitHub 모바일 대시보드 바로가기</a>")
 
         return "\n".join(msg_lines)
