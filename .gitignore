@@ -3,4 +3,5 @@ data/test_*
 __pycache__/
 *.db
 *.html
+!templates/*.html
 .omc/

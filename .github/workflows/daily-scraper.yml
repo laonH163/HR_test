@@ -47,7 +47,10 @@ jobs:
         git config --global user.name "github-actions[bot]"
         git config --global user.email "github-actions[bot]@users.noreply.github.com"
 
-        git add data/scrap_master.db index.html PRD/PROGRESS.md
+        # 파일이 실제로 존재할 때만 안전하게 add 처리
+        [ -f data/scrap_master.db ] && git add data/scrap_master.db || echo "No DB file found"
+        [ -f index.html ] && git add index.html || echo "No index.html file found"
+        [ -f PRD/PROGRESS.md ] && git add PRD/PROGRESS.md || echo "No PROGRESS file found"
 
         # 변경 사항이 있을 경우에만 커밋 자동 배포 진행 (에러 방지)
         if ! git diff --cached --quiet; then
