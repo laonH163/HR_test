@@ -80,6 +80,7 @@ class TelegramSender:
             msg_lines.append("")
 
         msg_lines.append("💻 상세 필터 및 전체 누적 공고 조회가 필요하신 경우, GitHub 모바일 앱 또는 웹 브라우저를 통해 실시간으로 확인하실 수 있습니다.")
-        msg_lines.append("👉 <a href='https://github.com/laonH163/HR_test/blob/main/index.html'>GitHub 모바일 대시보드 바로가기</a>")
+        msg_lines.append("👉 <a href='https://github.com/laonH163/HR_test/blob/main/index.html'>GitHub 모바일 웹으로 바로가기</a>")
+        msg_lines.append("👉 <a href='github://github.com/laonH163/HR_test/blob/main/index.html'>GitHub 공식 앱으로 다이렉트 열기 (딥링크)</a>")
 
         return "\n".join(msg_lines)
