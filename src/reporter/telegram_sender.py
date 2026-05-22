@@ -96,7 +96,7 @@ class TelegramSender:
             msg_lines.append("")
 
         msg_lines.append("━━━━━━━━━━━━━━━━━━━━")
-        msg_lines.append("💻 상세 필터 및 전체 누적 공고 조회가 필요하신 경우, 아래 링크를 통해 실시간으로 확인하실 수 있습니다.")
-        msg_lines.append("👉 <a href='https://github.com/laonH163/HR_test/blob/main/index.html'>[추천] GitHub 모바일 앱/웹으로 대시보드 바로보기</a>")
+        msg_lines.append("💻 상세 필터 및 전체 누적 공고 조회가 필요하신 경우, 아래 실시간 대시보드 링크를 터치해 주세요.")
+        msg_lines.append("👉 <a href='https://laonH163.github.io/HR_test/'>[실시간 웹 대시보드] 원클릭으로 바로가기</a>")
 
         return "\n".join(msg_lines)
