@@ -3,3 +3,4 @@ beautifulsoup4>=4.12.0
 python-dotenv>=1.0.0
 # 플레이라이트 등 동적 사이트 파싱 대비 (기본 requests/BeautifulSoup 우선)
 playwright>=1.40.0
+pytimekr>=0.1.0

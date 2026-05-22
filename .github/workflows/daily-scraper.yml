@@ -39,7 +39,13 @@ jobs:
       run: |
         # 가동 환경변수 동적 삽입
         export RUN_DATE_STR=$(date +'%Y-%m-%d')
-        python src/main.py --mode all
+
+        # 수동(workflow_dispatch) 가동 시에는 강제 실행(--force) 하도록 하여 테스트 완수 지원
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          python src/main.py --mode all --force
+        else
+          python src/main.py --mode all
+        fi
 
     - name: Automatically commit and push database & index.html updates
       run: |
