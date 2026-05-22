@@ -9,8 +9,12 @@ load_dotenv()
 class TelegramSender:
     def __init__(self):
         # 환경변수로부터 토큰 및 챗ID 안전 격리 (보안 규정 철저 준수)
-        self.bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
-        self.chat_id = os.getenv("TELEGRAM_CHAT_ID")
+        raw_token = os.getenv("TELEGRAM_BOT_TOKEN")
+        raw_chat_id = os.getenv("TELEGRAM_CHAT_ID")
+
+        # 앞뒤 불필요한 줄바꿈(\n), 따옴표(" or '), 공백 자동 제거 (보안 우회 대응)
+        self.bot_token = raw_token.strip().strip('"').strip("'") if raw_token else None
+        self.chat_id = raw_chat_id.strip().strip('"').strip("'") if raw_chat_id else None
         self.api_url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage" if self.bot_token else None
 
     def is_enabled(self):
