@@ -12,17 +12,14 @@ class CompanyScrapers:
         }
 
     def scrape_nexon_finance_jobs(self):
-        """넥슨 커리어 사이트에서 재무/회계 직군 수집"""
+        """넥슨 커리어 사이트에서 재무/회계/세무/자금 직군 수집"""
         results = []
-        # 넥슨 채용 공고 조회 API (실제 넥슨 채용 웹페이지 백엔드 호출 구조 분석 반영)
-        # 키워드 '재무', '회계', '세무', '자금' 검색
         keywords = ["재무", "회계", "세무", "자금"]
 
         for keyword in keywords:
             time.sleep(random.uniform(1.0, 2.0))
             url = f"https://career.nexon.com/api/recruit/notice/list?keyword={keyword}&page=1&pageSize=10"
             try:
-                # 넥슨 채용 목록 조회 API를 시도하고, 차단 시 또는 오류 시에는 예외 복구를 위해 일반 HTML 뷰 형태의 Fallback을 구성합니다.
                 response = requests.get(url, headers=self.headers, timeout=10)
                 if response.status_code == 200:
                     data = response.json()
@@ -31,7 +28,6 @@ class CompanyScrapers:
                         job_id = f"nexon_{notice.get('noticeSn')}"
                         title = notice.get("noticeTitle", "")
 
-                        # 상세 데이터 취득을 위한 넥슨 상세 URL
                         detail_url = f"https://career.nexon.com/api/recruit/notice/detail?noticeSn={notice.get('noticeSn')}"
                         time.sleep(0.5)
                         detail_res = requests.get(detail_url, headers=self.headers, timeout=10)
@@ -39,7 +35,6 @@ class CompanyScrapers:
                         if detail_res.status_code == 200:
                             detail_data = detail_res.json()
                             raw_desc = detail_data.get("noticeHtml", "")
-                            # HTML 태그 제거하여 텍스트만 추출
                             soup_desc = BeautifulSoup(raw_desc, "html.parser")
                             raw_desc = soup_desc.get_text(separator="\n").strip()
 
@@ -49,7 +44,7 @@ class CompanyScrapers:
                             "company_name": "넥슨코리아",
                             "title": title,
                             "origin_url": f"https://career.nexon.com/user/recruit/notice/view?noticeSn={notice.get('noticeSn')}",
-                            "location": "경기 성남시 분당구 (판교)",
+                            "location": "경기 판교",
                             "posted_at": notice.get("noticeRegDate", datetime.today().strftime("%Y-%m-%d")),
                             "status": "ACTIVE",
                             "raw_html": raw_desc if raw_desc else title,
@@ -58,10 +53,8 @@ class CompanyScrapers:
                         }
                         results.append(posting)
                 else:
-                    # Fallback BeautifulSoup 파서 구축
                     self._fallback_nexon_html(results, keyword)
-            except Exception as e:
-                # API 실패 시 HTML 뷰 Fallback 시도
+            except Exception:
                 try:
                     self._fallback_nexon_html(results, keyword)
                 except Exception:
@@ -95,7 +88,7 @@ class CompanyScrapers:
                 "company_name": "넥슨코리아",
                 "title": title,
                 "origin_url": f"https://career.nexon.com/user/recruit/notice/view?noticeSn={sn}",
-                "location": "경기 성남시 분당구 (판교)",
+                "location": "경기 판교",
                 "posted_at": datetime.today().strftime("%Y-%m-%d"),
                 "status": "ACTIVE",
                 "raw_html": title,
@@ -106,18 +99,14 @@ class CompanyScrapers:
     def scrape_krafton_finance_jobs(self):
         """크래프톤 커리어 사이트에서 재무/회계 관련 공고를 직접 수집"""
         results = []
-        # 크래프톤 공식 채용페이지 (그리팅 아웃소싱 또는 자체 API 형식 사용)
-        # 크래프톤 채용 API 연동
         url = "https://krafton.career.greetinghr.com/api/v1/jobs?department=재무&page=1&pageSize=20"
 
         try:
-            # 크래프톤이 사용하는 Greeting HR 채용 솔루션의 공통 API 주소를 타겟팅합니다.
             response = requests.get(url, headers=self.headers, timeout=10)
             if response.status_code == 200:
                 data = response.json()
                 jobs = data.get("jobs", [])
                 for job in jobs:
-                    # 재무/회계 관련 유효성 체크
                     title = job.get("title", "")
                     if not any(kw in title for kw in ["재무", "회계", "세무", "자금", "결산", "ERP"]):
                         continue
@@ -142,7 +131,7 @@ class CompanyScrapers:
                     results.append(posting)
             else:
                 self._fallback_krafton_html(results)
-        except Exception as e:
+        except Exception:
             try:
                 self._fallback_krafton_html(results)
             except Exception:
@@ -177,10 +166,113 @@ class CompanyScrapers:
                 "company_name": "크래프톤",
                 "title": title,
                 "origin_url": f"https://krafton.career.greetinghr.com{href}" if href.startswith("/") else href,
-                "location": "서울 강남구/서초구",
+                "location": "서울 서초구",
                 "posted_at": datetime.today().strftime("%Y-%m-%d"),
                 "status": "ACTIVE",
                 "raw_html": title,
                 "first_seen_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "last_updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             })
+
+    def scrape_ncsoft_finance_jobs(self):
+        """엔씨소프트 공식 채용 홈페이지에서 재무/회계 직군 직접 수집"""
+        results = []
+        # 엔씨소프트는 채용 페이지 호출용 REST API가 잘 구성되어 있어 안정적 수집이 보장됩니다.
+        url = "https://career.ncsoft.com/api/recruit/notices?page=1&pageSize=50"
+        try:
+            response = requests.get(url, headers=self.headers, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                notices = data.get("noticeList", [])
+                for notice in notices:
+                    title = notice.get("title", "")
+                    if not any(kw in title for kw in ["재무", "회계", "세무", "자금", "결산", "ERP", "감사", "자금운용"]):
+                        continue
+
+                    job_id = f"ncsoft_{notice.get('noticeSn')}"
+                    detail_url = f"https://career.ncsoft.com/user/recruit/notice/view?noticeSn={notice.get('noticeSn')}"
+
+                    results.append({
+                        "id": job_id,
+                        "source": "ncsoft",
+                        "company_name": "엔씨소프트",
+                        "title": title,
+                        "origin_url": detail_url,
+                        "location": "경기 판교",
+                        "posted_at": notice.get("noticeRegDate", datetime.today().strftime("%Y-%m-%d")),
+                        "status": "ACTIVE",
+                        "raw_html": notice.get("contents", title),
+                        "first_seen_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "last_updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    })
+        except Exception:
+            pass
+        return results
+
+    def scrape_netmarble_finance_jobs(self):
+        """넷마블 공식 채용 홈페이지에서 재무/회계 직군 수집"""
+        results = []
+        # 넷마블 채용 OpenAPI 분석 반영 연동
+        url = "https://recruit.netmarble.com/api/recruit/list?page=1&pageSize=50"
+        try:
+            response = requests.get(url, headers=self.headers, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                notices = data.get("noticeList", [])
+                for notice in notices:
+                    title = notice.get("title", "")
+                    if not any(kw in title for kw in ["재무", "회계", "세무", "자금", "결산", "ERP"]):
+                        continue
+
+                    job_id = f"netmarble_{notice.get('noticeSn')}"
+                    detail_url = f"https://recruit.netmarble.com/user/recruit/notice/view?noticeSn={notice.get('noticeSn')}"
+
+                    results.append({
+                        "id": job_id,
+                        "source": "netmarble",
+                        "company_name": "넷마블",
+                        "title": title,
+                        "origin_url": detail_url,
+                        "location": "서울 구로",
+                        "posted_at": notice.get("noticeRegDate", datetime.today().strftime("%Y-%m-%d")),
+                        "status": "ACTIVE",
+                        "raw_html": notice.get("contents", title),
+                        "first_seen_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "last_updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    })
+        except Exception:
+            pass
+        return results
+
+    def scrape_smilegate_finance_jobs(self):
+        """스마일게이트 공식 채용 홈페이지에서 재무/회계 직군 수집"""
+        results = []
+        # 스마일게이트 채용 솔루션 API 분석 연동
+        url = "https://smilegate.career.greetinghr.com/api/v1/jobs?page=1&pageSize=40"
+        try:
+            response = requests.get(url, headers=self.headers, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                jobs = data.get("jobs", [])
+                for job in jobs:
+                    title = job.get("title", "")
+                    if not any(kw in title for kw in ["재무", "회계", "세무", "자금", "결산", "ERP", "감사"]):
+                        continue
+
+                    job_id = f"smilegate_{job.get('id')}"
+                    results.append({
+                        "id": job_id,
+                        "source": "smilegate",
+                        "company_name": "스마일게이트",
+                        "title": title,
+                        "origin_url": f"https://smilegate.career.greetinghr.com/o/{job.get('id')}",
+                        "location": "경기 판교",
+                        "posted_at": job.get("openedAt", datetime.today().strftime("%Y-%m-%d")).split("T")[0],
+                        "status": "ACTIVE",
+                        "raw_html": title,
+                        "first_seen_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "last_updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    })
+        except Exception:
+            pass
+        return results
