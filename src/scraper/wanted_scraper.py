@@ -97,17 +97,30 @@ class WantedScraper:
                         title = "재무 회계 담당자"
                         company = "게임회사"
 
-                        # 텍스트 정보 파싱
-                        corp_el = a_tag.select_one("[class*='JobCard_companyName_']") or a_tag.select_one("span")
-                        title_el = a_tag.select_one("[class*='JobCard_title_']") or a_tag.select_one("strong")
+                        # 텍스트 정보 파싱 (최신 원티드 카드 UI 클래스명 완벽 대응)
+                        corp_el = (a_tag.select_one("[class*='JobCard_companyName_']") or
+                                   a_tag.select_one("span[class*='companyName']") or
+                                   a_tag.select_one("span") or
+                                   a_tag.select_one(".company-name"))
+
+                        title_el = (a_tag.select_one("[class*='JobCard_title_']") or
+                                    a_tag.select_one("strong[class*='title']") or
+                                    a_tag.select_one("strong") or
+                                    a_tag.select_one(".position-title"))
 
                         if corp_el:
                             company = corp_el.text.strip()
                         if title_el:
                             title = title_el.text.strip()
 
-                        # 게임 업계 공고인지 사전 필터링
-                        if not self.is_game_company(company, title):
+                        # 만약 회사명이나 제목 추출에 실패한 경우, 상세 페이지 URL 분석을 위해 무조건 진입 허용 (방어 필터링 우회)
+                        if company == "게임회사" or title == "재무 회계 담당자":
+                            is_suspicious_default = True
+                        else:
+                            is_suspicious_default = False
+
+                        # 게임 업계 공고인지 사전 필터링 (suspicious 상태면 상세 페이지 검증을 위해 무조건 진행)
+                        if not is_suspicious_default and not self.is_game_company(company, title):
                             continue
 
                         # 상세 페이지로 이동해 본문 내용 긁어오기
