@@ -4,6 +4,7 @@ from datetime import datetime
 from src.database.db_manager import DBManager
 from src.scraper.wanted_scraper import WantedScraper
 from src.scraper.saramin_scraper import SaraminScraper
+from src.scraper.jobkorea_scraper import JobKoreaScraper
 from src.scraper.company_scrapers import CompanyScrapers
 from src.classifier.hybrid_engine import HybridClassificationEngine
 from src.analyzer.delta_analyzer import DeltaAnalyzer
@@ -19,6 +20,7 @@ def run_scraping_phase():
     db_manager = DBManager()
     wanted = WantedScraper()
     saramin = SaraminScraper()
+    jobkorea = JobKoreaScraper()
     companies = CompanyScrapers()
     classifier = HybridClassificationEngine()
     analyzer = DeltaAnalyzer(db_manager)
@@ -45,7 +47,16 @@ def run_scraping_phase():
     except Exception as e:
         print(f"    [ERR] 사람인 수집 실패: {e}", file=sys.stderr)
 
-    # 3. 넥슨 수집
+    # 3. 잡코리아 수집
+    print("[-] 잡코리아(JobKorea) 채용 정보 수집 중...")
+    try:
+        jobkorea_jobs = jobkorea.scrape_finance_jobs()
+        print(f"    -> 잡코리아 수집 성공: {len(jobkorea_jobs)} 건 발굴")
+        all_postings.extend(jobkorea_jobs)
+    except Exception as e:
+        print(f"    [ERR] 잡코리아 수집 실패: {e}", file=sys.stderr)
+
+    # 4. 넥슨 수집
     print("[-] 넥슨(Nexon) 공식 채용공고 수집 중...")
     try:
         nexon_jobs = companies.scrape_nexon_finance_jobs()
@@ -54,7 +65,7 @@ def run_scraping_phase():
     except Exception as e:
         print(f"    [ERR] 넥슨 공식 수집 실패: {e}", file=sys.stderr)
 
-    # 4. 크래프톤 수집
+    # 5. 크래프톤 수집
     print("[-] 크래프톤(Krafton) 공식 채용공고 수집 중...")
     try:
         krafton_jobs = companies.scrape_krafton_finance_jobs()
@@ -63,7 +74,34 @@ def run_scraping_phase():
     except Exception as e:
         print(f"    [ERR] 크래프톤 공식 수집 실패: {e}", file=sys.stderr)
 
-    # 5. DB 적재 및 정밀 하이브리드 분류
+    # 6. 엔씨소프트 수집
+    print("[-] 엔씨소프트(NCSOFT) 공식 채용공고 수집 중...")
+    try:
+        ncsoft_jobs = companies.scrape_ncsoft_finance_jobs()
+        print(f"    -> 엔씨소프트 공식 수집 성공: {len(ncsoft_jobs)} 건 발굴")
+        all_postings.extend(ncsoft_jobs)
+    except Exception as e:
+        print(f"    [ERR] 엔씨소프트 공식 수집 실패: {e}", file=sys.stderr)
+
+    # 7. 넷마블 수집
+    print("[-] 넷마블(Netmarble) 공식 채용공고 수집 중...")
+    try:
+        netmarble_jobs = companies.scrape_netmarble_finance_jobs()
+        print(f"    -> 넷마블 공식 수집 성공: {len(netmarble_jobs)} 건 발굴")
+        all_postings.extend(netmarble_jobs)
+    except Exception as e:
+        print(f"    [ERR] 넷마블 공식 수집 실패: {e}", file=sys.stderr)
+
+    # 8. 스마일게이트 수집
+    print("[-] 스마일게이트(Smilegate) 공식 채용공고 수집 중...")
+    try:
+        smilegate_jobs = companies.scrape_smilegate_finance_jobs()
+        print(f"    -> 스마일게이트 공식 수집 성공: {len(smilegate_jobs)} 건 발굴")
+        all_postings.extend(smilegate_jobs)
+    except Exception as e:
+        print(f"    [ERR] 스마일게이트 공식 수집 실패: {e}", file=sys.stderr)
+
+    # 9. DB 적재 및 정밀 하이브리드 분류
     print("\n[-] SQLite 데이터베이스 마스터 적재 및 정밀 분류 가동 중...")
     newly_added = 0
     modified_count = 0
@@ -86,7 +124,7 @@ def run_scraping_phase():
         except Exception as e:
             print(f"    [ERR] DB 적재 및 분류 에러 ({posting['id']}): {e}", file=sys.stderr)
 
-    # 6. Delta Analyzer 연동 (마감 CLOSED 상태 갱신)
+    # 10. Delta Analyzer 연동 (마감 CLOSED 상태 갱신)
     print("\n[-] Delta Analyzer 가동: 수집 종료된 마감 공고 선별 중...")
     closed_count = 0
     try:
@@ -98,7 +136,7 @@ def run_scraping_phase():
     except Exception as e:
         print(f"    [ERR] Delta 분석 실패: {e}", file=sys.stderr)
 
-    # 7. 실행 이력 로그 수립
+    # 11. 실행 이력 로그 수립
     try:
         log_entry = {
             "run_date": datetime.today().strftime("%Y-%m-%d"),
@@ -113,7 +151,7 @@ def run_scraping_phase():
     except Exception as e:
         print(f"    [ERR] 수집 로그 적재 실패: {e}", file=sys.stderr)
 
-    # 8. [Milestone 3] HTML 정적 대시보드 리포트 생성 가동
+    # 12. [Milestone 3] HTML 정적 대시보드 리포트 생성 가동
     print("\n[-] HTML 대시보드 생성기(Milestone 3) 가동 중...")
     try:
         total_html_jobs = reporter.generate_dashboard()
@@ -121,7 +159,7 @@ def run_scraping_phase():
     except Exception as e:
         print(f"    [ERR] HTML 대시보드 생성 실패: {e}", file=sys.stderr)
 
-    # 9. [Milestone 4] 프라이빗 텔레그램 데일리 요약 발송 가동
+    # 13. [Milestone 4] 프라이빗 텔레그램 데일리 요약 발송 가동
     print("\n[-] 프라이빗 텔레그램 알림 발송(Milestone 4) 가동 중...")
     try:
         # 데이터베이스 전체 활성 데이터 조회

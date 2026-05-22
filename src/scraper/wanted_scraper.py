@@ -6,8 +6,14 @@ from bs4 import BeautifulSoup
 
 class WantedScraper:
     def __init__(self):
-        # 분석 대상 게임 회사 매핑 (소문자 기준 정규화)
-        self.game_keywords = ["게임", "game", "nexon", "krafton", "ncsoft", "netmarble", "neowiz", "line games", "com2us", "devsisters", "smilegate", "웹젠", "펄어비스", "위메이드", "카카오게임즈", "그라비티", "넥슨", "크래프톤", "엔씨", "넷마블", "네오위즈", "스마일게이트", "데브시스터즈", "컴투스"]
+        # 2배 이상 확장된 대한민국 핵심 게임 제작 및 서비스 회사 전 범위 명칭 사전
+        self.game_keywords = [
+            "게임", "game", "nexon", "krafton", "ncsoft", "netmarble", "neowiz", "smilegate",
+            "펄어비스", "위메이드", "카카오게임즈", "그라비티", "넥슨", "크래프톤", "엔씨소프트",
+            "넷마블", "네오위즈", "스마일게이트", "데브시스터즈", "컴투스", "웹젠", "조이시티",
+            "한빛소프트", "썸에이지", "해긴", "쿡앱스", "클로버게임즈", "시프트업", "라인게임즈",
+            "더블유게임즈", "레드브릭", "엔씨"
+        ]
 
     def is_game_company(self, company_name, job_description):
         """회사명 또는 직무 상세 내용에 게임 도메인 키워드가 들어있는지 필터링"""
