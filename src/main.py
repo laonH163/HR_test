@@ -1,6 +1,7 @@
 import argparse
 import sys
 from datetime import datetime
+from pytimekr import pytimekr  # 한국 공휴일 완벽 방어용 라이브러리
 from src.database.db_manager import DBManager
 from src.scraper.wanted_scraper import WantedScraper
 from src.scraper.saramin_scraper import SaraminScraper
@@ -182,14 +183,39 @@ def run_scraping_phase():
 
 def main():
     parser = argparse.ArgumentParser(description="GameFinanceScraper CLI")
-    parser.add_init = parser.add_argument(
+    parser.add_argument(
         "--mode",
         choices=["all", "scrap", "classify", "report"],
         default="scrap",
         help="실행 모드 (기본값: scrap)"
     )
+    # 수동 디버깅 등 강제 실행 옵션 지원
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="주말/공휴일 감지 가드를 우회하여 즉시 강제 수집 실행"
+    )
 
     args = parser.parse_args()
+
+    # 주말 및 한국 공휴일 자동 가드 체크 (force 옵션이 없을 때만 작동)
+    if not args.force:
+        today = datetime.today()
+        # 1. 주말 체크 (5=토요일, 6=일요일)
+        if today.weekday() in [5, 6]:
+            print(f"📢 [SKIP] 오늘은 주말({today.strftime('%A')})입니다. 수집과 알림을 모두 건너뜁니다.")
+            sys.exit(0)
+
+        # 2. 한국 법정 공휴일 체크 (pytimekr 라이브러리 연동)
+        try:
+            holidays = pytimekr.holidays(today.year)
+            # 오늘 날짜가 공휴일 목록에 포함되는지 검사 (date 타입 매칭)
+            if today.date() in holidays:
+                print(f"📢 [SKIP] 오늘은 대한민국 법정 공휴일({today.strftime('%Y-%m-%d')})입니다. 수집과 알림을 건너뜁니다.")
+                sys.exit(0)
+        except Exception as e:
+            # 혹시 라이브러리 조회 실패 시 수집이 아예 멈추는 걸 예방하기 위한 안전 통과
+            print(f"    [WARN] 공휴일 판정기 API 조회 실패: {e}. 일반 평일로 간주하고 진행합니다.")
 
     if args.mode == "scrap" or args.mode == "all":
         run_scraping_phase()
