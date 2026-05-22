@@ -113,6 +113,9 @@ class WantedScraper:
                         if title_el:
                             title = title_el.text.strip()
 
+                        # 🔍 [원격 교차 검증 디버그 로그] 원티드에서 감지한 모든 원본 카드 덤프 출력
+                        print(f"        [WANTED RAW CARD DETECTED] 회사명: {company} | 제목: {title}")
+
                         # 만약 회사명이나 제목 추출에 실패한 경우, 상세 페이지 URL 분석을 위해 무조건 진입 허용 (방어 필터링 우회)
                         if company == "게임회사" or title == "재무 회계 담당자":
                             is_suspicious_default = True
