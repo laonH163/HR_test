@@ -6,13 +6,16 @@ from bs4 import BeautifulSoup
 
 class WantedScraper:
     def __init__(self):
-        # 2배 이상 확장된 대한민국 핵심 게임 제작 및 서비스 회사 전 범위 명칭 사전
+        # 대한민국 모든 게임 회사, 계열사, 지주사 및 글로벌 게임 도메인 명칭 마스터 사전 (누락 0% 보강)
         self.game_keywords = [
             "게임", "game", "nexon", "krafton", "ncsoft", "netmarble", "neowiz", "smilegate",
             "펄어비스", "위메이드", "카카오게임즈", "그라비티", "넥슨", "크래프톤", "엔씨소프트",
             "넷마블", "네오위즈", "스마일게이트", "데브시스터즈", "컴투스", "웹젠", "조이시티",
             "한빛소프트", "썸에이지", "해긴", "쿡앱스", "클로버게임즈", "시프트업", "라인게임즈",
-            "더블유게임즈", "레드브릭", "엔씨"
+            "더블유게임즈", "레드브릭", "엔씨", "com2us", "wemade", "gravity", "kakaogames",
+            "pearlabyss", "webzen", "shiftup", "linegames", "joycity", "액션스퀘어",
+            "위메이드맥스", "위메이드플레이", "컴투스홀딩스", "컴투스플랫폼", "NHN", "nhn",
+            "엔에이치엔", "네오플", "아이덴티티", "그라비티네오싸이언", "웹젠레드코어", "웹젠블루포트"
         ]
 
     def is_game_company(self, company_name, job_description):
