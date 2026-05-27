@@ -1,9 +1,9 @@
+import requests
+from bs4 import BeautifulSoup
+import re
 import random
 import time
-import re
 from datetime import datetime
-from playwright.sync_api import sync_playwright
-from bs4 import BeautifulSoup
 
 class JobKoreaScraper:
     def __init__(self):
@@ -15,6 +15,12 @@ class JobKoreaScraper:
             "한빛소프트", "썸에이지", "해긴", "쿡앱스", "클로버게임즈", "시프트업", "라인게임즈",
             "더블유게임즈", "레드브릭", "엔씨"
         ]
+        self.headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Referer": "https://www.google.com/"
+        }
 
     def is_game_company(self, company_name, title):
         """회사명 또는 공고 제목에 게임업계 키워드가 포함되는지 필터링"""
@@ -27,122 +33,115 @@ class JobKoreaScraper:
         return False
 
     def scrape_finance_jobs(self, limit=15):
-        """스텔스 우회가 적용된 잡코리아 공고 수집 엔진"""
+        """requests 및 최신 개편 CSS 선택자를 적용하여 리팩토링된 잡코리아 수집 엔진"""
         results = []
         keywords = ["회계", "세무", "재무", "자금"]
 
-        with sync_playwright() as p:
-            browser = p.chromium.launch(
-                headless=True,
-                args=[
-                    "--disable-blink-features=AutomationControlled",
-                    "--no-sandbox",
-                    "--disable-setuid-sandbox"
-                ]
-            )
-
-            context = browser.new_context(
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                viewport={"width": 1280, "height": 800},
-                locale="ko-KR",
-                timezone_id="Asia/Seoul"
-            )
-
-            page = context.new_page()
-
-            page.add_init_script("""
-                Object.defineProperty(navigator, 'webdriver', {
-                    get: () => undefined
-                });
-            """)
-
-            for keyword in keywords:
-                time.sleep(random.uniform(1.5, 3.0))
-                # 잡코리아 검색 연동
-                search_url = f"https://www.jobkorea.co.kr/Search/?stext={keyword}"
-                try:
-                    page.goto(search_url, timeout=30000)
-                    page.wait_for_timeout(3000)
-
-                    # 스크롤 2회 다운으로 충분한 컨텐츠 확보
-                    for _ in range(2):
-                        page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                        time.sleep(1.0)
-
-                    content = page.content()
-                    soup = BeautifulSoup(content, "html.parser")
-                    # 잡코리아 검색 목록 카드 선택자
-                    job_items = soup.select(".list-default .list-post")
-
-                    count = 0
-                    for item in job_items:
-                        if count >= limit:
-                            break
-
-                        corp_area = item.select_one(".post-list-corp a")
-                        title_area = item.select_one(".post-list-info a")
-
-                        if not corp_area or not title_area:
-                            continue
-
-                        company_name = corp_area.text.strip()
-                        title = title_area.text.strip()
-
-                        # 게임 도메인 매칭 검증
-                        if not self.is_game_company(company_name, title):
-                            continue
-
-                        # 유일 주소 및 ID 획득
-                        href = title_area.get("href", "")
-                        # 잡코리아 공고 ID 파싱 (예: gno=123456)
-                        gno_match = re.search(r"gno=(\d+)", href)
-                        if not gno_match:
-                            continue
-                        jk_id = gno_match.group(1)
-                        job_id = f"jobkorea_{jk_id}"
-
-                        # 중복 방어
-                        if any(r["id"] == job_id for r in results):
-                            continue
-
-                        detail_url = f"https://www.jobkorea.co.kr/Recruit/GI_Read/{jk_id}"
-                        detail_page = context.new_page()
-                        time.sleep(random.uniform(0.5, 1.5))
-                        detail_page.goto(detail_url, timeout=20000)
-                        detail_page.wait_for_timeout(2000)
-
-                        detail_html = detail_page.content()
-                        detail_soup = BeautifulSoup(detail_html, "html.parser")
-
-                        # 공고 본문 정보 파싱
-                        main_content = detail_soup.select_one(".recruit-detail-con") or detail_soup.select_one("body")
-                        desc_text = main_content.get_text(separator="\n").strip() if main_content else title
-
-                        location_el = item.select_one(".option .loc")
-                        location = location_el.text.strip() if location_el else "서울"
-
-                        detail_page.close()
-
-                        posting = {
-                            "id": job_id,
-                            "source": "jobkorea",
-                            "company_name": company_name,
-                            "title": title,
-                            "origin_url": detail_url,
-                            "location": location,
-                            "posted_at": datetime.today().strftime("%Y-%m-%d"),
-                            "status": "ACTIVE",
-                            "raw_html": desc_text,
-                            "first_seen_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                            "last_updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                        }
-                        results.append(posting)
-                        count += 1
-
-                except Exception:
+        for keyword in keywords:
+            time.sleep(random.uniform(1.0, 2.5))
+            # 잡코리아 검색 연동
+            search_url = f"https://www.jobkorea.co.kr/Search/?stext={keyword}"
+            try:
+                res = requests.get(search_url, headers=self.headers, timeout=15)
+                if res.status_code != 200:
                     continue
 
-            browser.close()
+                soup = BeautifulSoup(res.text, "html.parser")
+
+                # 최신 잡코리아 검색 결과 카드 컨테이너 선택
+                job_cards = soup.select("div[class*='rounded-2xl']") or soup.select("div[class*='hover:bg-blue54']")
+
+                # 만약 카드 단위 셀렉터가 실패할 경우를 위한 튼튼한 폴백
+                if not job_cards:
+                    gi_links = soup.select("a[href*='/Recruit/GI_Read/']")
+                    job_cards = []
+                    for link in gi_links:
+                        parent = link.parent
+                        while parent and parent.name != "div":
+                            parent = parent.parent
+                        if parent and parent not in job_cards:
+                            job_cards.append(parent)
+
+                count = 0
+                for card in job_cards:
+                    if count >= limit:
+                        break
+
+                    title_link = card.select_one("a[href*='/Recruit/GI_Read/']")
+                    if not title_link:
+                        continue
+
+                    href = title_link.get("href", "")
+                    gno_match = re.search(r"GI_Read/(\d+)", href) or re.search(r"gno=(\d+)", href)
+                    if not gno_match:
+                        continue
+                    jk_id = gno_match.group(1)
+                    job_id = f"jobkorea_{jk_id}"
+
+                    # 중복 방어
+                    if any(r["id"] == job_id for r in results):
+                        continue
+
+                    title = title_link.text.strip()
+                    company_name = "잡코리아 채용 기업"
+
+                    # 카드 레벨에서 1차 정보 수집
+                    company_link = card.select_one("a[href*='/Company/']") or card.select_one("a[target='_blank']")
+                    if company_link and company_link != title_link:
+                        company_name = company_link.text.strip()
+
+                    # 상세 페이지 접속하여 정밀 보정 및 본문 수집
+                    detail_url = f"https://www.jobkorea.co.kr/Recruit/GI_Read/{jk_id}"
+                    time.sleep(random.uniform(0.5, 1.2))
+
+                    try:
+                        detail_res = requests.get(detail_url, headers=self.headers, timeout=10)
+                        if detail_res.status_code == 200:
+                            detail_soup = BeautifulSoup(detail_res.text, "html.parser")
+
+                            # 공고 본문 정보 파싱
+                            main_content = detail_soup.select_one(".recruit-detail-con") or detail_soup.select_one("#content") or detail_soup.select_one("body")
+                            desc_text = main_content.get_text(separator="\n").strip() if main_content else title
+
+                            # 제목 및 회사명 오정제 정밀 보정
+                            # 잡코리아 개편 구조: H2는 회사명, H1은 채용 타이틀
+                            meta_company_el = detail_soup.select_one("h2")
+                            if meta_company_el and len(meta_company_el.text.strip()) > 0:
+                                company_name = meta_company_el.text.strip()
+
+                            h1_elements = [h.text.strip() for h in detail_soup.select("h1") if h.text.strip()]
+                            if h1_elements:
+                                title = h1_elements[0]
+                        else:
+                            desc_text = title
+                    except Exception:
+                        desc_text = title
+
+                    # 최종 보정 후 다시 게임사 여부 점검 (안전장치)
+                    if not self.is_game_company(company_name, title) and "게임" not in desc_text.lower() and "game" not in desc_text.lower():
+                        continue
+
+                    location_el = card.select_one(".loc") or card.select_one(".option span")
+                    location = location_el.text.strip() if location_el else "서울"
+
+                    posting = {
+                        "id": job_id,
+                        "source": "jobkorea",
+                        "company_name": company_name,
+                        "title": title,
+                        "origin_url": detail_url,
+                        "location": location,
+                        "posted_at": datetime.today().strftime("%Y-%m-%d"),
+                        "status": "ACTIVE",
+                        "raw_html": desc_text,
+                        "first_seen_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "last_updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    }
+                    results.append(posting)
+                    count += 1
+
+            except Exception:
+                continue
 
         unique_postings = {}
         for item in results:
