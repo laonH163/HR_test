@@ -227,8 +227,39 @@ def verify_gamejob_requests():
             print(f"    [ERR] 게임잡 수집 실패: {e}")
 
 
+def verify_shiftup_requests():
+    print("\n==========================================")
+    print("5. [신규완성] 시프트업(ShiftUp) 공식 API 기반 수집 검증")
+    print("==========================================")
+    url = "https://shiftup.co.kr/comm/lib/client_lib.php"
+    headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+        "Referer": "https://shiftup.co.kr/recruit/recruit.php",
+        "X-Requested-With": "XMLHttpRequest"
+    }
+    data = "workType=get_recruit_list&code=recruit&cat_idx=0&searchkey="
+
+    try:
+        res = requests.post(url, headers=headers, data=data, timeout=10)
+        jobs = res.json().get("list", [])
+        print(f"    시프트업 전체 채용공고 수: {len(jobs)}개")
+        count = 0
+        for job in jobs:
+            title = job.get("subject", "")
+            if any(kw in title for kw in ["재무", "회계", "세무", "자금", "경리", "결산"]):
+                count += 1
+                idx = job.get("idx")
+                exp = job.get("addinfo3", "경력")
+                print(f"    [{count}] ID: {idx} | 제목: {title} | 연차: {exp}")
+        print(f"    => 최종 시프트업 공식 재무/회계/세무 공고 발굴 수: {count}개")
+    except Exception as e:
+        print(f"    [ERR] 시프트업 수집 실패: {e}")
+
+
 if __name__ == "__main__":
     verify_wanted_requests()
     verify_saramin_requests()
     verify_jobkorea_requests()
     verify_gamejob_requests()
+    verify_shiftup_requests()

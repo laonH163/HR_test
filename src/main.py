@@ -114,6 +114,15 @@ def run_scraping_phase():
     except Exception as e:
         print(f"    [ERR] 스마일게이트 공식 수집 실패: {e}", file=sys.stderr)
 
+    # 8-1. 시프트업 수집
+    print("[-] 시프트업(ShiftUp) 공식 채용공고 수집 중...")
+    try:
+        shiftup_jobs = companies.scrape_shiftup_finance_jobs()
+        print(f"    -> 시프트업 공식 수집 성공: {len(shiftup_jobs)} 건 발굴")
+        all_postings.extend(shiftup_jobs)
+    except Exception as e:
+        print(f"    [ERR] 시프트업 공식 수집 실패: {e}", file=sys.stderr)
+
     # 9. DB 적재 및 정밀 하이브리드 분류
     print("\n[-] SQLite 데이터베이스 마스터 적재 및 정밀 분류 가동 중...")
     newly_added = 0
