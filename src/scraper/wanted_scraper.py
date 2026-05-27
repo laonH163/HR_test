@@ -17,11 +17,31 @@ class WantedScraper:
             "위메이드맥스", "위메이드플레이", "컴투스홀딩스", "컴투스플랫폼", "NHN", "nhn",
             "엔에이치엔", "네오플", "아이덴티티", "그라비티네오싸이언", "웹젠레드코어", "웹젠블루포트"
         ]
+        # 비개발/비제조 순수 카지노, 리조트, 오락실, 보드게임카페 등 게임 개발 및 IT도메인이 아닌 기업 블랙리스트
+        self.company_blacklist = [
+            "람정", "신화월드", "카지노", "casino", "호텔", "hotel", "리조트", "resort",
+            "홀덤", "보드게임카페", "보드카페", "멀티방", "오락실"
+        ]
+        # 원치 않는 비사무/비재무 상세 직무 키워드 블랙리스트
+        self.title_blacklist = [
+            "딜러", "dealer", "식음료", "f&b", "객실", "안내", "서빙", "바텐더", "벨맨",
+            "캐셔", "카운터", "알바", "아르바이트"
+        ]
 
     def is_game_company(self, company_name, job_description):
         """회사명 또는 직무 상세 내용에 게임 도메인 키워드가 들어있는지 필터링"""
         norm_name = company_name.lower()
         norm_desc = job_description.lower()
+
+        # 1. 회사명 블랙리스트 사전 검사
+        for blocked in self.company_blacklist:
+            if blocked in norm_name or blocked in norm_desc:
+                return False
+
+        # 2. 직무명 블랙리스트 사전 검사
+        for blocked_title in self.title_blacklist:
+            if blocked_title in norm_desc:
+                return False
 
         # 회사명 직접 매칭
         for kw in self.game_keywords:
