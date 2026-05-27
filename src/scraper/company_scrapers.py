@@ -276,3 +276,50 @@ class CompanyScrapers:
         except Exception:
             pass
         return results
+
+    def scrape_shiftup_finance_jobs(self):
+        """시프트업(ShiftUp) 공식 채용 사이트에서 재무/회계/세무/자금/경리 공고 직접 수집"""
+        results = []
+        url = "https://shiftup.co.kr/comm/lib/client_lib.php"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+            "Referer": "https://shiftup.co.kr/recruit/recruit.php",
+            "X-Requested-With": "XMLHttpRequest"
+        }
+        data = "workType=get_recruit_list&code=recruit&cat_idx=0&searchkey="
+
+        try:
+            response = requests.post(url, headers=headers, data=data, timeout=10)
+            if response.status_code == 200:
+                data_json = response.json()
+                jobs = data_json.get("list", [])
+                for job in jobs:
+                    title = job.get("subject", "")
+                    if not any(kw in title for kw in ["재무", "회계", "세무", "자금", "경리", "결산"]):
+                        continue
+
+                    job_id = f"shiftup_{job.get('idx')}"
+                    content_html = job.get("content", "")
+
+                    soup_desc = BeautifulSoup(content_html, "html.parser")
+                    raw_desc = soup_desc.get_text(separator="\n").strip()
+
+                    experience_str = job.get("addinfo3", "경력")
+
+                    results.append({
+                        "id": job_id,
+                        "source": "shiftup",
+                        "company_name": "시프트업",
+                        "title": title,
+                        "origin_url": "https://shiftup.co.kr/recruit/recruit.php",
+                        "location": "서울 서초구",
+                        "posted_at": job.get("wdate", datetime.today().strftime("%Y-%m-%d")).split(" ")[0],
+                        "status": "ACTIVE",
+                        "raw_html": f"경력 요건: {experience_str}\n\n상세 정보:\n{raw_desc}",
+                        "first_seen_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "last_updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    })
+        except Exception:
+            pass
+        return results
