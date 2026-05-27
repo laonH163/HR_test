@@ -1,11 +1,13 @@
 import argparse
 import sys
+import traceback
 from datetime import datetime
 from pytimekr import pytimekr  # 한국 공휴일 완벽 방어용 라이브러리
 from src.database.db_manager import DBManager
 from src.scraper.wanted_scraper import WantedScraper
 from src.scraper.saramin_scraper import SaraminScraper
 from src.scraper.jobkorea_scraper import JobKoreaScraper
+from src.scraper.gamejob_scraper import GameJobScraper
 from src.scraper.company_scrapers import CompanyScrapers
 from src.classifier.hybrid_engine import HybridClassificationEngine
 from src.analyzer.delta_analyzer import DeltaAnalyzer
@@ -22,6 +24,7 @@ def run_scraping_phase():
     wanted = WantedScraper()
     saramin = SaraminScraper()
     jobkorea = JobKoreaScraper()
+    gamejob = GameJobScraper()
     companies = CompanyScrapers()
     classifier = HybridClassificationEngine()
     analyzer = DeltaAnalyzer(db_manager)
@@ -56,6 +59,15 @@ def run_scraping_phase():
         all_postings.extend(jobkorea_jobs)
     except Exception as e:
         print(f"    [ERR] 잡코리아 수집 실패: {e}", file=sys.stderr)
+
+    # 3-1. 게임잡 수집
+    print("[-] 게임잡(GameJob) 채용 정보 수집 중...")
+    try:
+        gamejob_jobs = gamejob.scrape_finance_jobs()
+        print(f"    -> 게임잡 수집 성공: {len(gamejob_jobs)} 건 발굴")
+        all_postings.extend(gamejob_jobs)
+    except Exception as e:
+        print(f"    [ERR] 게임잡 수집 실패: {e}", file=sys.stderr)
 
     # 4. 넥슨 수집
     print("[-] 넥슨(Nexon) 공식 채용공고 수집 중...")
@@ -124,6 +136,7 @@ def run_scraping_phase():
 
         except Exception as e:
             print(f"    [ERR] DB 적재 및 분류 에러 ({posting['id']}): {e}", file=sys.stderr)
+            traceback.print_exc()
 
     # 10. Delta Analyzer 연동 (마감 CLOSED 상태 갱신)
     print("\n[-] Delta Analyzer 가동: 수집 종료된 마감 공고 선별 중...")
