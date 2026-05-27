@@ -19,14 +19,41 @@ class GameJobScraper:
             "회계", "세무", "재무", "자금", "경리", "결산", "ERP", "감사", "세정",
             "자금운용", "내부통제", "accounting", "finance", "tax", "auditing"
         ]
+        # 비개발/비제조 순수 카지노, 리조트, 오락실, 보드게임카페 등 게임 개발 및 IT도메인이 아닌 기업 블랙리스트
+        self.company_blacklist = [
+            "람정", "신화월드", "카지노", "casino", "호텔", "hotel", "리조트", "resort",
+            "홀덤", "보드게임카페", "보드카페", "멀티방", "오락실"
+        ]
+        # 원치 않는 비사무/비재무 상세 직무 키워드 블랙리스트
+        self.title_blacklist = [
+            "딜러", "dealer", "식음료", "f&b", "객실", "안내", "서빙", "바텐더", "벨맨",
+            "캐셔", "카운터", "알바", "아르바이트"
+        ]
 
     def is_finance_job(self, title):
-        """직무 타이틀이 핵심 재무/회계/세무/자군 카테고리에 속하는지 검증"""
+        """직무 타이틀이 핵심 재무/회계/세무/자금 카테고리에 속하는지 검증"""
         norm_title = title.lower()
         for kw in self.finance_keywords:
             if kw in norm_title:
                 return True
         return False
+
+    def is_valid_company_and_job(self, company_name, title):
+        """카지노, 리조트, 단순 오락 업종 및 비사무직 직무 필터링 (람정 등 원천 차단)"""
+        norm_company = company_name.lower()
+        norm_title = title.lower()
+
+        # 1. 회사명 블랙리스트 검사
+        for blocked_co in self.company_blacklist:
+            if blocked_co in norm_company or blocked_co in norm_title:
+                return False
+
+        # 2. 직무명 블랙리스트 검사
+        for blocked_title in self.title_blacklist:
+            if blocked_title in norm_title:
+                return False
+
+        return True
 
     def scrape_finance_jobs(self, limit=15):
         """EUC-KR 검색어 전송 및 UTF-8 응답 파싱, 그리고 직무 타이틀 필터가 반영된 게임잡 수집기"""
@@ -109,6 +136,10 @@ class GameJobScraper:
 
                         # 직무 필터링: 반드시 재무/회계/세무 직군이어야만 승인
                         if not self.is_finance_job(title):
+                            continue
+
+                        # 기업 및 직무 블랙리스트 엄격 필터링 (람정, 카지노, 딜러 등)
+                        if not self.is_valid_company_and_job(company_name, title):
                             continue
 
                         # 공고 본문 내용
