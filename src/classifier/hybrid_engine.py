@@ -173,17 +173,22 @@ class HybridClassificationEngine:
         company = job_posting["company_name"]
         title = job_posting["title"]
 
+        # 제목+본문 결합 텍스트로 분류 신호를 추출한다.
+        # 본문이 풍부한 공고(크래프톤·시프트업·플랫폼)도 제목의 "(3년 이상)"·"(과장급)"·"재택"
+        # 신호가 본문엔 없을 수 있어, 제목을 함께 봐야 연차·근무형태 추출이 정확해진다.
+        analysis_text = f"{title}\n{raw_text}"
+
         # 1. 근무 형태 분류
-        work_type = self.classify_work_type(raw_text)
+        work_type = self.classify_work_type(analysis_text)
 
         # 2. 최소/최대 연차 추출
-        exp_min, exp_max = self.extract_experience(raw_text)
+        exp_min, exp_max = self.extract_experience(analysis_text)
 
         # 3. 연봉 추출
-        sal_min, sal_max = self.extract_salary(raw_text)
+        sal_min, sal_max = self.extract_salary(analysis_text)
 
         # 4. 사용 도구 및 정밀 스킬 태깅
-        tools = self.extract_tools_and_skills(raw_text)
+        tools = self.extract_tools_and_skills(analysis_text)
 
         # 5. 직무 분류 대분류 결정 (타이틀과 본문 매칭)
         primary_category = "회계"
