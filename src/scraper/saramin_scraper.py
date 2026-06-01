@@ -4,6 +4,7 @@ import re
 import random
 import time
 from datetime import datetime
+from src.utils.http import make_session
 
 class SaraminScraper:
     def __init__(self):
@@ -34,6 +35,8 @@ class SaraminScraper:
             "딜러", "dealer", "식음료", "f&b", "객실", "안내", "서빙", "바텐더", "벨맨",
             "캐셔", "카운터", "알바", "아르바이트"
         ]
+        # 일시적 네트워크 오류 자동 재시도 + 커넥션 재사용
+        self.session = make_session(headers=self.headers)
 
     def is_game_company(self, company_name, title):
         """회사명 또는 공고 제목에 게임 도메인 키워드가 포함되는지 필터링"""
@@ -65,7 +68,7 @@ class SaraminScraper:
             # 사람인 검색 페이지 (requests 연동)
             search_url = f"https://www.saramin.co.kr/zf_user/search/recruit?searchword={keyword}&cat_mcls=2"
             try:
-                res = requests.get(search_url, headers=self.headers, timeout=15)
+                res = self.session.get(search_url, headers=self.headers, timeout=15)
                 if res.status_code != 200:
                     continue
 
@@ -106,7 +109,7 @@ class SaraminScraper:
                     time.sleep(random.uniform(0.5, 1.2))
 
                     try:
-                        detail_res = requests.get(detail_url, headers=self.headers, timeout=10)
+                        detail_res = self.session.get(detail_url, headers=self.headers, timeout=10)
                         if detail_res.status_code == 200:
                             detail_soup = BeautifulSoup(detail_res.text, "html.parser")
                             main_content = detail_soup.select_one(".wrap_jv_co") or detail_soup.select_one(".jv_content") or detail_soup.select_one("body")

@@ -37,8 +37,8 @@ jobs:
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         PYTHONPATH: .
       run: |
-        # 가동 환경변수 동적 삽입
-        export RUN_DATE_STR=$(date +'%Y-%m-%d')
+        # 가동 환경변수 동적 삽입 (러너는 UTC이므로 한국 시간 기준으로 날짜 고정)
+        export RUN_DATE_STR=$(TZ='Asia/Seoul' date +'%Y-%m-%d')
 
         # 수동(workflow_dispatch) 가동 시에는 강제 실행(--force) 하도록 하여 테스트 완수 지원
         if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then

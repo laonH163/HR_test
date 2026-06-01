@@ -1,15 +1,19 @@
 import requests
+import sys
 from bs4 import BeautifulSoup
 import random
 import time
 from datetime import datetime
 import json
+from src.utils.http import make_session
 
 class CompanyScrapers:
     def __init__(self):
         self.headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }
+        # 일시적 네트워크 오류 자동 재시도 + 커넥션 재사용
+        self.session = make_session(headers=self.headers)
 
     def scrape_nexon_finance_jobs(self):
         """넥슨 커리어 사이트에서 재무/회계/세무/자금 직군 수집"""
@@ -20,7 +24,7 @@ class CompanyScrapers:
             time.sleep(random.uniform(1.0, 2.0))
             url = f"https://career.nexon.com/api/recruit/notice/list?keyword={keyword}&page=1&pageSize=10"
             try:
-                response = requests.get(url, headers=self.headers, timeout=10)
+                response = self.session.get(url, headers=self.headers, timeout=10)
                 if response.status_code == 200:
                     data = response.json()
                     notices = data.get("noticeList", [])
@@ -30,7 +34,7 @@ class CompanyScrapers:
 
                         detail_url = f"https://career.nexon.com/api/recruit/notice/detail?noticeSn={notice.get('noticeSn')}"
                         time.sleep(0.5)
-                        detail_res = requests.get(detail_url, headers=self.headers, timeout=10)
+                        detail_res = self.session.get(detail_url, headers=self.headers, timeout=10)
                         raw_desc = ""
                         if detail_res.status_code == 200:
                             detail_data = detail_res.json()
@@ -57,7 +61,8 @@ class CompanyScrapers:
             except Exception:
                 try:
                     self._fallback_nexon_html(results, keyword)
-                except Exception:
+                except Exception as e:
+                    print(f"    [ERR] 넥슨 API/폴백 수집 실패({keyword}): {e}", file=sys.stderr)
                     continue
 
         return results
@@ -65,7 +70,7 @@ class CompanyScrapers:
     def _fallback_nexon_html(self, results, keyword):
         """넥슨 커리어 사이트 HTML 구조 기반 파싱 (API 오류 시 폴백)"""
         url = f"https://career.nexon.com/user/recruit/notice/list?keyword={keyword}"
-        response = requests.get(url, headers=self.headers, timeout=10)
+        response = self.session.get(url, headers=self.headers, timeout=10)
         if response.status_code != 200:
             return
         soup = BeautifulSoup(response.text, "html.parser")
@@ -102,7 +107,7 @@ class CompanyScrapers:
         url = "https://krafton.career.greetinghr.com/api/v1/jobs?department=재무&page=1&pageSize=20"
 
         try:
-            response = requests.get(url, headers=self.headers, timeout=10)
+            response = self.session.get(url, headers=self.headers, timeout=10)
             if response.status_code == 200:
                 data = response.json()
                 jobs = data.get("jobs", [])
@@ -134,15 +139,15 @@ class CompanyScrapers:
         except Exception:
             try:
                 self._fallback_krafton_html(results)
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"    [ERR] 크래프톤 API/폴백 수집 실패: {e}", file=sys.stderr)
 
         return results
 
     def _fallback_krafton_html(self, results):
         """크래프톤 채용 사이트 HTML 구조 직접 크롤링 (API 장애 시 폴백)"""
         url = "https://krafton.career.greetinghr.com/"
-        response = requests.get(url, headers=self.headers, timeout=10)
+        response = self.session.get(url, headers=self.headers, timeout=10)
         if response.status_code != 200:
             return
         soup = BeautifulSoup(response.text, "html.parser")
@@ -180,7 +185,7 @@ class CompanyScrapers:
         # 엔씨소프트는 채용 페이지 호출용 REST API가 잘 구성되어 있어 안정적 수집이 보장됩니다.
         url = "https://career.ncsoft.com/api/recruit/notices?page=1&pageSize=50"
         try:
-            response = requests.get(url, headers=self.headers, timeout=10)
+            response = self.session.get(url, headers=self.headers, timeout=10)
             if response.status_code == 200:
                 data = response.json()
                 notices = data.get("noticeList", [])
@@ -205,8 +210,8 @@ class CompanyScrapers:
                         "first_seen_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                         "last_updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     })
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"    [ERR] 엔씨소프트 API 수집 실패: {e}", file=sys.stderr)
         return results
 
     def scrape_netmarble_finance_jobs(self):
@@ -215,7 +220,7 @@ class CompanyScrapers:
         # 넷마블 채용 OpenAPI 분석 반영 연동
         url = "https://recruit.netmarble.com/api/recruit/list?page=1&pageSize=50"
         try:
-            response = requests.get(url, headers=self.headers, timeout=10)
+            response = self.session.get(url, headers=self.headers, timeout=10)
             if response.status_code == 200:
                 data = response.json()
                 notices = data.get("noticeList", [])
@@ -240,8 +245,8 @@ class CompanyScrapers:
                         "first_seen_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                         "last_updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     })
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"    [ERR] 넷마블 API 수집 실패: {e}", file=sys.stderr)
         return results
 
     def scrape_smilegate_finance_jobs(self):
@@ -250,7 +255,7 @@ class CompanyScrapers:
         # 스마일게이트 채용 솔루션 API 분석 연동
         url = "https://smilegate.career.greetinghr.com/api/v1/jobs?page=1&pageSize=40"
         try:
-            response = requests.get(url, headers=self.headers, timeout=10)
+            response = self.session.get(url, headers=self.headers, timeout=10)
             if response.status_code == 200:
                 data = response.json()
                 jobs = data.get("jobs", [])
@@ -273,8 +278,8 @@ class CompanyScrapers:
                         "first_seen_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                         "last_updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     })
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"    [ERR] 스마일게이트 API 수집 실패: {e}", file=sys.stderr)
         return results
 
     def scrape_shiftup_finance_jobs(self):
@@ -290,7 +295,7 @@ class CompanyScrapers:
         data = "workType=get_recruit_list&code=recruit&cat_idx=0&searchkey="
 
         try:
-            response = requests.post(url, headers=headers, data=data, timeout=10)
+            response = self.session.post(url, headers=headers, data=data, timeout=10)
             if response.status_code == 200:
                 data_json = response.json()
                 jobs = data_json.get("list", [])
@@ -320,6 +325,21 @@ class CompanyScrapers:
                         "first_seen_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                         "last_updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     })
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"    [ERR] 시프트업 채용 API 수집 실패: {e}", file=sys.stderr)
+        return results
+
+    def scrape_official_adapters(self):
+        """ATS 어댑터 기반 공식 게임사 자체페이지 통합 수집.
+
+        크래프톤(Greenhouse)·네오위즈(Lever)·카카오게임즈(greetinghr)·펄어비스(정적) 등
+        무인증 API/정적 그룹을 한 번에 수집한다. 각 어댑터는 safe_fetch로 격리돼
+        한 회사 실패가 나머지 수집을 막지 않는다. (시프트업은 위 자체 메서드 유지)
+        """
+        from src.scraper.ats.registry import build_official_adapters
+        results = []
+        for adapter in build_official_adapters(session=self.session):
+            jobs = adapter.safe_fetch()
+            print(f"       · {adapter.company_name}: {len(jobs)}건")
+            results.extend(jobs)
         return results

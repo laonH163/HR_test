@@ -67,6 +67,38 @@ class TestScraperAndDatabase(unittest.TestCase):
         self.assertFalse(is_new)
         self.assertTrue(is_modified)
 
+    def test_modified_ignores_noise(self):
+        """공백·날짜 같은 노이즈만 바뀐 경우 MODIFIED로 잡지 않되, 실제 본문 변경은 포착하는지 검증"""
+        base = {
+            "id": "noise_1",
+            "source": "wanted",
+            "company_name": "테스트게임즈",
+            "title": "재무회계 담당자",
+            "origin_url": "https://wanted.co.kr/wd/999",
+            "location": "판교",
+            "posted_at": "2026-05-21",
+            "status": "ACTIVE",
+            "raw_html": "자격요건:\n회계 결산 가능자\n공고 마감일 2026-05-21",
+            "first_seen_at": "2026-05-21 12:00:00",
+            "last_updated_at": "2026-05-21 12:00:00"
+        }
+        _, is_new = self.db_manager.upsert_job_posting(base)
+        self.assertTrue(is_new)
+
+        # 1) 공백 변형 + 날짜만 바뀐 경우 → 의미 없는 노이즈이므로 MODIFIED 아님
+        noise = base.copy()
+        noise["raw_html"] = "자격요건:   회계 결산 가능자    공고 마감일 2026-05-28"
+        is_modified, is_new = self.db_manager.upsert_job_posting(noise)
+        self.assertFalse(is_new)
+        self.assertFalse(is_modified)
+
+        # 2) 실제 본문(자격요건) 변경 → MODIFIED로 잡혀야 함 (연봉·요건 변경은 절대 놓치면 안 됨)
+        real = base.copy()
+        real["raw_html"] = "자격요건:\n회계 결산 가능자 및 SAP 사용 필수\n공고 마감일 2026-05-21"
+        is_modified, is_new = self.db_manager.upsert_job_posting(real)
+        self.assertFalse(is_new)
+        self.assertTrue(is_modified)
+
     def test_wanted_filtering(self):
         """원티드 스크래퍼의 게임 회사 필터링 로직 검증"""
         scraper = WantedScraper()

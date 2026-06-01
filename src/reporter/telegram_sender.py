@@ -47,7 +47,7 @@ class TelegramSender:
             print(f"    [ERR] 텔레그램 통신 장애: {e}", file=sys.stderr)
             return False
 
-    def build_daily_briefing_message(self, newly_added, modified_count, closed_count, active_postings):
+    def build_daily_briefing_message(self, newly_added, modified_count, closed_count, active_postings, weekly_trend=None):
         """당일 수집된 통계 데이터 및 공고 리스트 기반 가독성 높은 텔레그램 카드 메세지 빌딩"""
         date_str = datetime_str = os.getenv("GITHUB_RUN_ID", "로컬") # 가동 컨텍스트
         run_date = os.getenv('RUN_DATE_STR', datetime_str)
@@ -60,8 +60,15 @@ class TelegramSender:
             f"• 신규 등록 공고: <b>{newly_added} 건</b>",
             f"• 주요 업데이트 공고: <b>{modified_count} 건</b>",
             f"• 채용 종료(마감) 공고: <b>{closed_count} 건</b>",
-            f"━━━━━━━━━━━━━━━━━━━━\n"
         ]
+
+        # 최근 7일 추세(시계열) 한 줄 — 전달된 경우에만 노출(테스트 시그니처 호환을 위해 선택적)
+        if weekly_trend and weekly_trend.get("days"):
+            msg_lines.append(
+                f"📈 최근 {weekly_trend['days']}일 누적: 신규 <b>{weekly_trend.get('total_new', 0)}건</b> · 마감 <b>{weekly_trend.get('total_closed', 0)}건</b>"
+            )
+
+        msg_lines.append("━━━━━━━━━━━━━━━━━━━━\n")
 
         # 오늘 추가된 신규 공고 아이디 구하기
         new_jobs = []

@@ -1,6 +1,7 @@
 import sqlite3
 import os
 import json
+import re
 
 class DBManager:
     def __init__(self, db_path="data/scrap_master.db"):
@@ -12,7 +13,21 @@ class DBManager:
     def get_connection(self):
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
+        # FK 제약(ON DELETE CASCADE 등)은 SQLite 연결마다 명시적으로 켜야 적용됨
+        conn.execute("PRAGMA foreign_keys = ON")
         return conn
+
+    def _normalize_for_diff(self, text):
+        """MODIFIED 판정용 정규화. 공백/개행과 날짜·시각 같은 노이즈를 제거해
+        실제 의미 있는 본문 변경만 변동으로 잡도록 한다. 숫자(연봉 등)는 보존한다
+        — 놓치면 안 되는 핵심 변경이므로 의도적으로 남긴다."""
+        if not text:
+            return ""
+        t = re.sub(r"\s+", " ", text)
+        # 날짜(YYYY-MM-DD / YYYY.MM.DD)와 시각(HH:MM) — 마감일 자동표기·조회시각 노이즈 제거
+        t = re.sub(r"\d{4}[-.]\d{1,2}[-.]\d{1,2}", "", t)
+        t = re.sub(r"\b\d{1,2}:\d{2}\b", "", t)
+        return t.strip()
 
     def init_db(self):
         """데이터베이스 테이블 생성"""
@@ -88,9 +103,10 @@ class DBManager:
 
         if existing:
             # 상태 비교 (제목이나 내용 혹은 상태가 바뀌었는지 점검)
-            # 델타 분석을 위해 raw_html 내용의 변경 감지
-            # raw_html 내용이 다르다면 업데이트 대상
-            if existing["raw_html"] != posting["raw_html"] or existing["status"] != posting["status"]:
+            # 델타 분석을 위해 raw_html 내용의 변경 감지 — 단, 공백·날짜 같은 노이즈는
+            # 정규화로 무시하여 의미 있는 본문 변경(자격요건·연봉 등)만 MODIFIED로 잡는다.
+            content_changed = self._normalize_for_diff(existing["raw_html"]) != self._normalize_for_diff(posting["raw_html"])
+            if content_changed or existing["status"] != posting["status"]:
                 cursor.execute("""
                     UPDATE job_postings
                     SET title = ?, origin_url = ?, location = ?, status = ?, raw_html = ?, last_updated_at = ?
@@ -171,8 +187,11 @@ class DBManager:
         """현재 활성화된 모든 공고 및 매핑된 분석 카테고리 데이터 조회 (HTML 대시보드 렌더링용)"""
         conn = self.get_connection()
         cursor = conn.cursor()
+        # raw_html은 대시보드/텔레그램에서 쓰지 않으므로 제외 (페이로드 축소 + 인라인 주입 리스크 제거)
         cursor.execute("""
-            SELECT p.*, c.primary_category, c.min_experience, c.max_experience,
+            SELECT p.id, p.source, p.company_name, p.title, p.origin_url, p.location,
+                   p.posted_at, p.status, p.first_seen_at, p.last_updated_at,
+                   c.primary_category, c.min_experience, c.max_experience,
                    c.salary_min, c.salary_max, c.work_type, c.company_revenue, c.company_size,
                    c.key_requirements, c.preferred_skills, c.tools_used, c.ai_summary
             FROM job_postings p
@@ -183,3 +202,36 @@ class DBManager:
         rows = cursor.fetchall()
         conn.close()
         return rows
+
+    def get_recent_scrape_stats(self, days=7):
+        """최근 N일 수집 추세 집계(성공 실행 기준). HTML 트렌드 위젯·주간 인사이트용.
+
+        같은 날 여러 번 실행됐을 수 있으므로 run_date로 합산한 뒤 최신 N일을 반환한다.
+        """
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT run_date,
+                   SUM(newly_added)    AS newly_added,
+                   SUM(modified_count) AS modified_count,
+                   SUM(closed_count)   AS closed_count
+            FROM scrape_logs
+            WHERE is_success = 1
+            GROUP BY run_date
+            ORDER BY run_date DESC
+            LIMIT ?
+            """,
+            (days,),
+        )
+        daily = [dict(r) for r in cursor.fetchall()]
+        conn.close()
+
+        total_new = sum((d["newly_added"] or 0) for d in daily)
+        total_closed = sum((d["closed_count"] or 0) for d in daily)
+        return {
+            "days": len(daily),
+            "total_new": total_new,
+            "total_closed": total_closed,
+            "daily": daily,  # 최신순
+        }

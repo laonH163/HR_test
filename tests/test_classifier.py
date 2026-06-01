@@ -49,43 +49,58 @@ class TestClassifierAndDelta(unittest.TestCase):
         self.assertEqual(min_exp, 0)
         self.assertEqual(max_exp, 1)
 
+        # 4) 직급 표현 폴백 ('급'/'이상'이 붙은 경우만, 명시 연차가 없을 때)
+        min_exp, max_exp = self.engine.extract_experience("대리급 회계 결산 담당자 모집")
+        self.assertEqual(min_exp, 3)
+        self.assertIsNone(max_exp)
+
+        min_exp, max_exp = self.engine.extract_experience("과장급 이상 세무 전문가를 찾습니다")
+        self.assertEqual(min_exp, 6)
+        self.assertIsNone(max_exp)
+
+        # 5) 직급 단어가 무관한 문맥(과장님과 협업)에 있을 땐 오탐 없이 연차 무관 처리
+        min_exp, max_exp = self.engine.extract_experience("팀 내 과장님과 긴밀히 협업하는 직무입니다")
+        self.assertEqual(min_exp, 0)
+        self.assertIsNone(max_exp)
+
+        # 6) 명시 연차가 있으면 직급보다 우선 (대리급이지만 5년 이상이 명시된 경우)
+        min_exp, max_exp = self.engine.extract_experience("대리급, 경력 5년 이상 우대")
+        self.assertEqual(min_exp, 5)
+        self.assertIsNone(max_exp)
+
     def test_delta_closed_logic(self):
-        """델타 변동 분석기의 마감 처리 로직 검증"""
-        posting_1 = {
-            "id": "wanted_aaa",
-            "source": "wanted",
-            "company_name": "넥슨코리아",
-            "title": "세무 세액 조정 담당",
-            "origin_url": "https://wanted.co.kr/wd/aaa",
-            "location": "판교",
-            "posted_at": "2026-05-21",
-            "status": "ACTIVE",
-            "raw_html": "자격요건: 세무조정 경력 5년 이상",
-            "first_seen_at": "2026-05-21 12:00:00",
-            "last_updated_at": "2026-05-21 12:00:00"
-        }
-        posting_2 = {
-            "id": "wanted_bbb",
-            "source": "wanted",
-            "company_name": "크래프톤",
-            "title": "자금 관리 담당자",
-            "origin_url": "https://wanted.co.kr/wd/bbb",
-            "location": "서초",
-            "posted_at": "2026-05-21",
-            "status": "ACTIVE",
-            "raw_html": "자격요건: 외환 자금 관리 3년 이상",
-            "first_seen_at": "2026-05-21 12:00:00",
-            "last_updated_at": "2026-05-21 12:00:00"
-        }
+        """델타 변동 분석기의 마감 처리 로직 검증 (수집 누락 안전장치 포함)"""
+        def make_posting(pid, company, title, html):
+            return {
+                "id": pid,
+                "source": "wanted",
+                "company_name": company,
+                "title": title,
+                "origin_url": f"https://wanted.co.kr/wd/{pid}",
+                "location": "서울",
+                "posted_at": "2026-05-21",
+                "status": "ACTIVE",
+                "raw_html": html,
+                "first_seen_at": "2026-05-21 12:00:00",
+                "last_updated_at": "2026-05-21 12:00:00"
+            }
 
-        # 마스터 테이블에 2개 공고 밀어넣기
-        self.db_manager.upsert_job_posting(posting_1)
-        self.db_manager.upsert_job_posting(posting_2)
+        postings = [
+            make_posting("wanted_aaa", "넥슨코리아", "세무 세액 조정 담당", "자격요건: 세무조정 경력 5년 이상"),
+            make_posting("wanted_bbb", "크래프톤", "자금 관리 담당자", "자격요건: 외환 자금 관리 3년 이상"),
+            make_posting("wanted_ccc", "엔씨소프트", "회계 결산 담당자", "자격요건: 결산 경력 3년"),
+            make_posting("wanted_ddd", "넷마블", "내부회계 담당자", "자격요건: 내부통제 담당"),
+        ]
+        for p in postings:
+            self.db_manager.upsert_job_posting(p)
 
-        # 오늘 수집된 ID 셋에는 bbb만 존재 (즉, aaa 공고는 마감 종료된 경우)
-        today_ids = {"wanted_bbb"}
+        # 1) 수집 건수가 3건 미만이면 크롤링 누락으로 간주하여 마감을 보류해야 함 (안전장치)
+        closed_count, _ = self.analyzer.analyze_closed_postings({"wanted_bbb"})
+        self.assertEqual(closed_count, 0)
+
+        # 2) 충분히 수집된 상태(3건 이상)에서, 누락된 aaa 공고만 정상 마감되어야 함
+        today_ids = {"wanted_bbb", "wanted_ccc", "wanted_ddd"}
         closed_count, closed_details = self.analyzer.analyze_closed_postings(today_ids)
-
         self.assertEqual(closed_count, 1)
         self.assertEqual(closed_details[0]["id"], "wanted_aaa")
 

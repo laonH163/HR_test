@@ -5,6 +5,7 @@ import random
 import time
 import urllib.parse
 from datetime import datetime
+from src.utils.http import make_session
 
 class GameJobScraper:
     def __init__(self):
@@ -29,6 +30,8 @@ class GameJobScraper:
             "딜러", "dealer", "식음료", "f&b", "객실", "안내", "서빙", "바텐더", "벨맨",
             "캐셔", "카운터", "알바", "아르바이트"
         ]
+        # 일시적 네트워크 오류 자동 재시도 + 커넥션 재사용
+        self.session = make_session(headers=self.headers)
 
     def is_finance_job(self, title):
         """직무 타이틀이 핵심 재무/회계/세무/자금 카테고리에 속하는지 검증"""
@@ -71,7 +74,7 @@ class GameJobScraper:
             search_url = f"https://www.gamejob.co.kr/List_GI/GI_Search_Keyword.asp?S_Div=GI_Keyword&S_Text={keyword_encoded}"
 
             try:
-                res = requests.get(search_url, headers=self.headers, timeout=15)
+                res = self.session.get(search_url, headers=self.headers, timeout=15)
                 html_text = res.content.decode("utf-8", errors="replace")
 
                 if res.status_code != 200:
@@ -107,7 +110,7 @@ class GameJobScraper:
                     # 각 공고 상세 페이지 접속 및 정보 수집
                     time.sleep(random.uniform(0.5, 1.2))
                     try:
-                        detail_res = requests.get(detail_url, headers=self.headers, timeout=10)
+                        detail_res = self.session.get(detail_url, headers=self.headers, timeout=10)
                         detail_html = detail_res.content.decode("utf-8", errors="replace")
 
                         if detail_res.status_code != 200:

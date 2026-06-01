@@ -53,8 +53,8 @@
                 <div class="text-3xl font-bold mt-2 text-emerald-600" x-text="entryCount()">0</div>
             </div>
             <div class="bg-white p-5 rounded-lg shadow-sm border border-gray-100">
-                <div class="text-xs text-gray-500 font-bold uppercase tracking-wider">수집 플랫폼 수</div>
-                <div class="text-3xl font-bold mt-2 text-amber-600">4 (멀티)</div>
+                <div class="text-xs text-gray-500 font-bold uppercase tracking-wider">최근 7일 신규 공고</div>
+                <div class="text-3xl font-bold mt-2 text-amber-600"><span x-text="(trend && trend.total_new) || 0">0</span><span class="text-base text-gray-400 font-normal"> 건</span></div>
             </div>
         </div>
 
@@ -130,7 +130,10 @@
                                 <td class="px-6 py-4">
                                     <div class="font-medium text-blue-600 hover:underline cursor-pointer"
                                          x-text="job.title" @click="toggleDetails(job.id)">제목</div>
-                                    <div class="text-xs text-gray-400 mt-1" x-text="job.location">근무지</div>
+                                    <div class="flex items-center gap-2 mt-1">
+                                        <span class="text-xs text-gray-400" x-text="job.location">근무지</span>
+                                        <span class="px-1.5 py-0.5 text-[10px] rounded font-bold mono" :class="getDaysBadgeClass(job)" x-text="getDaysBadge(job)"></span>
+                                    </div>
                                 </td>
                                 <td class="px-6 py-4">
                                     <span class="px-2 py-1 text-xs rounded font-bold"
@@ -210,6 +213,7 @@
                         <div class="flex flex-wrap gap-2 mt-3 text-xs text-slate-500">
                             <span class="bg-gray-100 px-2 py-0.5 rounded" x-text="getExperienceStr(job)">경력 무관</span>
                             <span class="bg-gray-100 px-2 py-0.5 rounded" x-text="job.work_type">근무형태</span>
+                            <span class="px-2 py-0.5 rounded font-bold mono" :class="getDaysBadgeClass(job)" x-text="getDaysBadge(job)"></span>
                         </div>
 
                         <!-- Mobile Details (Accordion) -->
@@ -260,11 +264,13 @@
         // 이 주석 부분 아래로 파이썬 HTML_Generator가 실제 DB JSON 레코드를 변수JOBS_DATA에 인라인으로 주입하여 덮어씁니다.
         const JOBS_DATA = [];
         const UPDATE_TIME_STRING = "2026-05-21 12:00:00";
+        const SCRAPE_TREND = {};
 
         function dashboardApp() {
             return {
                 jobs: JOBS_DATA,
                 updateTime: UPDATE_TIME_STRING,
+                trend: SCRAPE_TREND,
                 searchQuery: '',
                 selectedCategory: 'all',
                 selectedWorkType: 'all',
@@ -317,6 +323,32 @@
                     const min = job.min_experience || 0;
                     const max = job.max_experience ? `~${job.max_experience}년` : "년 이상";
                     return `경력 ${min}${max}`;
+                },
+
+                getDaysOpen(job) {
+                    // 최초 수집 시점(first_seen_at)부터 대시보드 갱신 시점까지 경과 일수
+                    if (!job.first_seen_at) return null;
+                    const seen = new Date(String(job.first_seen_at).replace(' ', 'T'));
+                    const now = new Date(String(UPDATE_TIME_STRING).replace(' ', 'T'));
+                    if (isNaN(seen.getTime()) || isNaN(now.getTime())) return null;
+                    const d = Math.floor((now - seen) / 86400000);
+                    return d >= 0 ? d : 0;
+                },
+
+                getDaysBadge(job) {
+                    const d = this.getDaysOpen(job);
+                    if (d === null) return '';
+                    if (d === 0) return '오늘 신규';
+                    if (d >= 14) return `D+${d} 장기공고`;
+                    return `D+${d}`;
+                },
+
+                getDaysBadgeClass(job) {
+                    const d = this.getDaysOpen(job);
+                    if (d === null) return 'bg-gray-100 text-gray-400';
+                    if (d === 0) return 'bg-emerald-100 text-emerald-700';
+                    if (d >= 14) return 'bg-rose-100 text-rose-700';
+                    return 'bg-slate-100 text-slate-600';
                 },
 
                 parseJsonList(jsonStr) {

@@ -4,6 +4,7 @@ import re
 import random
 import time
 from datetime import datetime
+from src.utils.http import make_session
 
 class JobKoreaScraper:
     def __init__(self):
@@ -34,6 +35,8 @@ class JobKoreaScraper:
             "딜러", "dealer", "식음료", "f&b", "객실", "안내", "서빙", "바텐더", "벨맨",
             "캐셔", "카운터", "알바", "아르바이트"
         ]
+        # 일시적 네트워크 오류 자동 재시도 + 커넥션 재사용
+        self.session = make_session(headers=self.headers)
 
     def is_game_company(self, company_name, title):
         """회사명 또는 공고 제목에 게임업계 키워드가 포함되는지 필터링"""
@@ -65,7 +68,7 @@ class JobKoreaScraper:
             # 잡코리아 검색 연동
             search_url = f"https://www.jobkorea.co.kr/Search/?stext={keyword}"
             try:
-                res = requests.get(search_url, headers=self.headers, timeout=15)
+                res = self.session.get(search_url, headers=self.headers, timeout=15)
                 if res.status_code != 200:
                     continue
 
@@ -118,7 +121,7 @@ class JobKoreaScraper:
                     time.sleep(random.uniform(0.5, 1.2))
 
                     try:
-                        detail_res = requests.get(detail_url, headers=self.headers, timeout=10)
+                        detail_res = self.session.get(detail_url, headers=self.headers, timeout=10)
                         if detail_res.status_code == 200:
                             detail_soup = BeautifulSoup(detail_res.text, "html.parser")
 

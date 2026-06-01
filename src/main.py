@@ -2,7 +2,11 @@ import argparse
 import sys
 import traceback
 from datetime import datetime
+from zoneinfo import ZoneInfo  # KST 고정 (GitHub Actions UTC 러너 대응)
 from pytimekr import pytimekr  # 한국 공휴일 완벽 방어용 라이브러리
+
+# 모든 날짜/시간 판정의 기준 타임존 (러너가 UTC여도 한국 기준으로 동작)
+KST = ZoneInfo("Asia/Seoul")
 from src.database.db_manager import DBManager
 from src.scraper.wanted_scraper import WantedScraper
 from src.scraper.saramin_scraper import SaraminScraper
@@ -69,50 +73,17 @@ def run_scraping_phase():
     except Exception as e:
         print(f"    [ERR] 게임잡 수집 실패: {e}", file=sys.stderr)
 
-    # 4. 넥슨 수집
-    print("[-] 넥슨(Nexon) 공식 채용공고 수집 중...")
+    # 4~8. 공식 게임사 자체 채용페이지 (ATS 어댑터로 통합)
+    #   크래프톤(Greenhouse)·네오위즈(Lever)·카카오게임즈(greetinghr)·펄어비스(정적).
+    #   기존 넥슨/엔씨/넷마블/스마일게이트의 채용 도메인은 폐기·이전된 것으로 라이브 확인되어,
+    #   잡코리아 기업페이지 우회로 별도 단계에서 보강 예정.
+    print("[-] 공식 게임사 자체 채용페이지(ATS 어댑터) 수집 중...")
     try:
-        nexon_jobs = companies.scrape_nexon_finance_jobs()
-        print(f"    -> 넥슨 공식 수집 성공: {len(nexon_jobs)} 건 발굴")
-        all_postings.extend(nexon_jobs)
+        official_jobs = companies.scrape_official_adapters()
+        print(f"    -> 공식 자체페이지 수집 성공: {len(official_jobs)} 건 발굴")
+        all_postings.extend(official_jobs)
     except Exception as e:
-        print(f"    [ERR] 넥슨 공식 수집 실패: {e}", file=sys.stderr)
-
-    # 5. 크래프톤 수집
-    print("[-] 크래프톤(Krafton) 공식 채용공고 수집 중...")
-    try:
-        krafton_jobs = companies.scrape_krafton_finance_jobs()
-        print(f"    -> 크래프톤 공식 수집 성공: {len(krafton_jobs)} 건 발굴")
-        all_postings.extend(krafton_jobs)
-    except Exception as e:
-        print(f"    [ERR] 크래프톤 공식 수집 실패: {e}", file=sys.stderr)
-
-    # 6. 엔씨소프트 수집
-    print("[-] 엔씨소프트(NCSOFT) 공식 채용공고 수집 중...")
-    try:
-        ncsoft_jobs = companies.scrape_ncsoft_finance_jobs()
-        print(f"    -> 엔씨소프트 공식 수집 성공: {len(ncsoft_jobs)} 건 발굴")
-        all_postings.extend(ncsoft_jobs)
-    except Exception as e:
-        print(f"    [ERR] 엔씨소프트 공식 수집 실패: {e}", file=sys.stderr)
-
-    # 7. 넷마블 수집
-    print("[-] 넷마블(Netmarble) 공식 채용공고 수집 중...")
-    try:
-        netmarble_jobs = companies.scrape_netmarble_finance_jobs()
-        print(f"    -> 넷마블 공식 수집 성공: {len(netmarble_jobs)} 건 발굴")
-        all_postings.extend(netmarble_jobs)
-    except Exception as e:
-        print(f"    [ERR] 넷마블 공식 수집 실패: {e}", file=sys.stderr)
-
-    # 8. 스마일게이트 수집
-    print("[-] 스마일게이트(Smilegate) 공식 채용공고 수집 중...")
-    try:
-        smilegate_jobs = companies.scrape_smilegate_finance_jobs()
-        print(f"    -> 스마일게이트 공식 수집 성공: {len(smilegate_jobs)} 건 발굴")
-        all_postings.extend(smilegate_jobs)
-    except Exception as e:
-        print(f"    [ERR] 스마일게이트 공식 수집 실패: {e}", file=sys.stderr)
+        print(f"    [ERR] 공식 자체페이지 수집 실패: {e}", file=sys.stderr)
 
     # 8-1. 시프트업 수집
     print("[-] 시프트업(ShiftUp) 공식 채용공고 수집 중...")
@@ -162,7 +133,7 @@ def run_scraping_phase():
     # 11. 실행 이력 로그 수립
     try:
         log_entry = {
-            "run_date": datetime.today().strftime("%Y-%m-%d"),
+            "run_date": datetime.now(KST).strftime("%Y-%m-%d"),
             "newly_added": newly_added,
             "modified_count": modified_count,
             "closed_count": closed_count,
@@ -189,9 +160,15 @@ def run_scraping_phase():
         active_postings_rows = db_manager.get_all_active_postings()
         active_postings = [dict(r) for r in active_postings_rows]
 
+        # 최근 7일 수집 추세를 함께 실어 발송 (조회 실패 시 None으로 안전 폴백)
+        try:
+            weekly_trend = db_manager.get_recent_scrape_stats(7)
+        except Exception:
+            weekly_trend = None
+
         # 텔레그램 마크다운 메세지 빌딩
         briefing_text = telegram.build_daily_briefing_message(
-            newly_added, modified_count, closed_count, active_postings
+            newly_added, modified_count, closed_count, active_postings, weekly_trend
         )
 
         # 최종 메시지 봇 발송
@@ -222,7 +199,7 @@ def main():
 
     # 주말 및 한국 공휴일 자동 가드 체크 (force 옵션이 없을 때만 작동)
     if not args.force:
-        today = datetime.today()
+        today = datetime.now(KST)
         # 1. 주말 체크 (5=토요일, 6=일요일)
         if today.weekday() in [5, 6]:
             print(f"📢 [SKIP] 오늘은 주말({today.strftime('%A')})입니다. 수집과 알림을 모두 건너뜁니다.")

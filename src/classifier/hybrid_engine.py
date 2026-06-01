@@ -71,11 +71,19 @@ class HybridClassificationEngine:
         if under_match:
             return 0, int(under_match.group(1))
 
-        # 4) 단순 경력 년 수 언급
+        # 4) 단순 경력 년 수 언급 (상한은 임의로 단정하지 않고 '이상'으로 처리)
         single_match = re.search(r"경력(\d+)년", norm_text)
         if single_match:
             val = int(single_match.group(1))
-            return val, val + 3
+            return val, None
+
+        # 5) 직급 표현 폴백: 명시적 연차 표기가 전혀 없을 때만 직급으로 최소 연차를 추정.
+        #    '급' 또는 '이상'이 직접 붙은 경우로 한정해 본문 속 "과장님과 협업" 같은 오탐을 배제.
+        #    상한은 None(='이상')으로 두어 연차 필터에서 누락되지 않도록 보수적으로 처리.
+        rank_to_min_years = [("부장", 12), ("차장", 9), ("과장", 6), ("대리", 3), ("주임", 2)]
+        for rank, min_yr in rank_to_min_years:
+            if re.search(rank + r"급", norm_text) or re.search(rank + r"이상", norm_text):
+                return min_yr, None
 
         # 기본 폴백: 연차 무관 처리
         return 0, None
@@ -113,9 +121,14 @@ class HybridClassificationEngine:
 
     def generate_ai_summary(self, title, company, work_type, exp_min, exp_max, tools):
         """분석된 속성 정보들을 종합하여 사용자가 한눈에 이해할 수 있는 3줄 한글 요약 생성"""
-        exp_str = f"경력 {exp_min}년 이상" if exp_min > 0 else "경력 무관 (신입 지원 가능)"
-        if exp_max:
+        if exp_min == 0 and exp_max == 1:
+            exp_str = "신입 지원 가능"
+        elif exp_min > 0 and exp_max:
             exp_str = f"경력 {exp_min}~{exp_max}년"
+        elif exp_min > 0:
+            exp_str = f"경력 {exp_min}년 이상"
+        else:
+            exp_str = "경력 무관 (신입 지원 가능)"
 
         summary_lines = [
             f"1. {company} 재무실 - '{title}' 채용 공고",
@@ -123,6 +136,35 @@ class HybridClassificationEngine:
             f"3. 요구 직무 도구 및 핵심 역량: {tools if tools else 'EXCEL 중심업무'}"
         ]
         return "\n".join(summary_lines)
+
+    def _normalize_company_name(self, company):
+        """법인 표기(㈜, (주), 주식회사 등)와 공백을 제거해 프리셋 매칭률을 높임"""
+        if not company:
+            return ""
+        norm = company
+        for token in ["㈜", "（주）", "(주)", "주식회사"]:
+            norm = norm.replace(token, "")
+        return norm.strip().replace(" ", "")
+
+    def _lookup_company_meta(self, company):
+        """회사명으로 매출/규모 프리셋을 조회. 정확 매칭 → 정규화 매칭 → 부분 포함 매칭 순."""
+        default = {"revenue": None, "size": None}
+        if not company:
+            return default
+        # 1) 원본 그대로 정확 매칭
+        if company in self.company_meta_presets:
+            return self.company_meta_presets[company]
+        # 2) 법인 표기 정규화 후 정확 매칭
+        norm = self._normalize_company_name(company)
+        for key, meta in self.company_meta_presets.items():
+            if self._normalize_company_name(key) == norm:
+                return meta
+        # 3) 부분 포함 매칭 (예: "넥슨코리아" ↔ "넥슨")
+        for key, meta in self.company_meta_presets.items():
+            nk = self._normalize_company_name(key)
+            if nk and (nk in norm or norm in nk):
+                return meta
+        return default
 
     def analyze_and_classify(self, job_posting):
         """하나의 채용 공고(마스터)를 완벽하게 분석하여 job_categories 용 엔티티를 빌드"""
@@ -152,8 +194,8 @@ class HybridClassificationEngine:
         elif "통제" in norm_title or "내부회계" in norm_title or "sox" in norm_title:
             primary_category = "내부통제"
 
-        # 6. 회사 메타 프리셋 정보 조회
-        preset = self.company_meta_presets.get(company, {"revenue": None, "size": None})
+        # 6. 회사 메타 프리셋 정보 조회 (법인 표기 정규화 + 부분 매칭 보강)
+        preset = self._lookup_company_meta(company)
 
         # 7. 3줄 요약 생성
         ai_summary = self.generate_ai_summary(title, company, work_type, exp_min, exp_max, tools)
