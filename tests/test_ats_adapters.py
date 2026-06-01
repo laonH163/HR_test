@@ -34,6 +34,8 @@ class TestATSAdapterFilters(unittest.TestCase):
             "게임 기획자 모집",
             "Product Owner (7년 이상)",
             "Senior Animator",
+            "고객감사 이벤트 운영 담당",  # '감사' 부분매칭 오탐 방지
+            "감사패 제작 디자이너",
         ]
         for title in negatives:
             self.assertFalse(self.adapter.is_finance_job(title), f"걸러져야 함: {title}")

@@ -18,8 +18,11 @@ from src.utils.http import make_session
 # 한국어 인사말('감사합니다')이 대량 오탐을 유발하기 때문(라이브에서 53/53건 전부 오탐 확인).
 FINANCE_KEYWORDS_KO = [
     "재무", "회계", "세무", "자금", "경리", "결산", "내부회계", "내부통제",
-    "재무기획", "자금운용", "원가", "공시", "감사",
+    "재무기획", "자금운용", "원가", "공시",
 ]
+# '감사'는 '고객감사 이벤트'·'감사패' 등 비재무 오탐이 많아 단독 키워드에서 제외하고,
+# 재무·회계 맥락 복합어로만 인정한다(아래 is_finance_job의 정규식).
+_AUDIT_PATTERN = r"(내부\s?감사|회계\s?감사|상근\s?감사|외부\s?감사|감사\s?담당|감사팀|감사실|감사역|감사\s?업무)"
 FINANCE_KEYWORDS_EN = [
     "finance", "financial", "accounting", "accountant", "tax",
     "audit", "treasury", "payroll", "fp&a",
@@ -65,6 +68,9 @@ class BaseATSAdapter:
         if any(kw in title for kw in FINANCE_KEYWORDS_KO):
             return True
         if any(kw in title_lower for kw in FINANCE_KEYWORDS_EN):
+            return True
+        # 감사: 재무·회계 맥락 복합어만 인정('고객감사 이벤트'·'감사패' 등 오탐 배제)
+        if re.search(_AUDIT_PATTERN, title):
             return True
         # IR(투자자관계/공시): 약어라 단어 경계로만 매칭해 hiring 등 오탐 방지
         return bool(re.search(r"\bir\b", title_lower))

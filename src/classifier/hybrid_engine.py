@@ -78,11 +78,12 @@ class HybridClassificationEngine:
             return val, None
 
         # 5) 직급 표현 폴백: 명시적 연차 표기가 전혀 없을 때만 직급으로 최소 연차를 추정.
-        #    '급' 또는 '이상'이 직접 붙은 경우로 한정해 본문 속 "과장님과 협업" 같은 오탐을 배제.
-        #    상한은 None(='이상')으로 두어 연차 필터에서 누락되지 않도록 보수적으로 처리.
+        #    공백 보존 원문(text)에서 매칭하고 '급여'는 negative lookahead로 배제한다.
+        #    (norm_text는 공백을 지워 "과장 급여"→"과장급여"→"과장급" 오탐을 만들므로 쓰지 않음)
+        #    '급'(직급 표기) 또는 직급명 직후 '이상'만 인정해 "과장님과 협업" 류도 배제.
         rank_to_min_years = [("부장", 12), ("차장", 9), ("과장", 6), ("대리", 3), ("주임", 2)]
         for rank, min_yr in rank_to_min_years:
-            if re.search(rank + r"급", norm_text) or re.search(rank + r"이상", norm_text):
+            if re.search(rank + r"\s?급(?!여)", text) or re.search(rank + r"\s?이상", text):
                 return min_yr, None
 
         # 기본 폴백: 연차 무관 처리

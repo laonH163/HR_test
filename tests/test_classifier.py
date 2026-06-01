@@ -68,6 +68,15 @@ class TestClassifierAndDelta(unittest.TestCase):
         self.assertEqual(min_exp, 5)
         self.assertIsNone(max_exp)
 
+        # 7) '급여' 오탐 방지 — "과장 급여"/"대리 급여"가 직급('과장급')으로 잘못 잡히지 않아야 함
+        #    (재무 본문엔 payroll/급여 정산 표현이 빈발하므로 중요)
+        min_exp, max_exp = self.engine.extract_experience("과장 급여대장 관리 및 결산 지원")
+        self.assertEqual(min_exp, 0)
+        self.assertIsNone(max_exp)
+        min_exp, max_exp = self.engine.extract_experience("대리 급여 정산 업무 담당")
+        self.assertEqual(min_exp, 0)
+        self.assertIsNone(max_exp)
+
     def test_delta_closed_logic(self):
         """델타 변동 분석기의 마감 처리 로직 검증 (수집 누락 안전장치 포함)"""
         def make_posting(pid, company, title, html):
