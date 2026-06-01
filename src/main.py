@@ -21,7 +21,7 @@ from src.reporter.telegram_sender import TelegramSender
 def run_scraping_phase():
     """Milestone 1 & 2: 멀티 소스 공고 수집, 정밀 하이브리드 분류 및 델타 변동 분석"""
     print("==================================================")
-    print("[Milestone 1 & 2] 채용공고 수집 및 하이브리드 정밀 분류 파이프라인 개시")
+    print("[Milestone 1 & 2 & 5] 채용공고 병렬 수집 및 하이브리드 정밀 분류 파이프라인 개시")
     print("==================================================")
 
     db_manager = DBManager()
@@ -37,62 +37,51 @@ def run_scraping_phase():
 
     all_postings = []
 
-    # 1. 원티드 수집
-    print("[-] 원티드(Wanted) 채용 정보 수집 중...")
-    try:
-        wanted_jobs = wanted.scrape_finance_jobs()
-        print(f"    -> 원티드 수집 성공: {len(wanted_jobs)} 건 발굴")
-        all_postings.extend(wanted_jobs)
-    except Exception as e:
-        print(f"    [ERR] 원티드 수집 실패: {e}", file=sys.stderr)
+    # [안전 재시도 데코레이터 함수] - WAF, 임시 커넥션 불안정 시 최대 3회 재시도 (수집 누락 원천 방어)
+    def fetch_with_retry(scraper_func, scraper_name, max_retries=3):
+        import time, random
+        for attempt in range(1, max_retries + 1):
+            try:
+                jobs = scraper_func()
+                print(f"    -> {scraper_name} 수집 성공: {len(jobs)} 건 발굴")
+                return jobs
+            except Exception as e:
+                print(f"    [WARN] {scraper_name} 수집 시도 {attempt}/{max_retries} 실패: {e}", file=sys.stderr)
+                if attempt == max_retries:
+                    print(f"    [ERR] {scraper_name} 수집 최종 실패", file=sys.stderr)
+                    return []
+                time.sleep(random.uniform(2.0, 5.0))
+        return []
 
-    # 2. 사람인 수집
-    print("[-] 사람인(Saramin) 채용 정보 수집 중...")
-    try:
-        saramin_jobs = saramin.scrape_finance_jobs()
-        print(f"    -> 사람인 수집 성공: {len(saramin_jobs)} 건 발굴")
-        all_postings.extend(saramin_jobs)
-    except Exception as e:
-        print(f"    [ERR] 사람인 수집 실패: {e}", file=sys.stderr)
+    # 1. 원티드 수집 (Wanted) - Playwright 기반이므로 Thread-safety 보장을 위해 동기식(메인 스레드)에서 우선 구동
+    print("[-] 원티드(Wanted) 채용 정보 수집 중 (메인 스레드)...")
+    wanted_jobs = fetch_with_retry(wanted.scrape_finance_jobs, "원티드")
+    all_postings.extend(wanted_jobs)
 
-    # 3. 잡코리아 수집
-    print("[-] 잡코리아(JobKorea) 채용 정보 수집 중...")
-    try:
-        jobkorea_jobs = jobkorea.scrape_finance_jobs()
-        print(f"    -> 잡코리아 수집 성공: {len(jobkorea_jobs)} 건 발굴")
-        all_postings.extend(jobkorea_jobs)
-    except Exception as e:
-        print(f"    [ERR] 잡코리아 수집 실패: {e}", file=sys.stderr)
+    # 2. 나머지 스크래퍼 병렬 구동 (Saramin, JobKorea, GameJob, Official ATS, ShiftUp)
+    # ThreadPoolExecutor를 사용해 requests 기반 동기 대기 시간을 병렬화
+    parallel_tasks = {
+        "사람인": saramin.scrape_finance_jobs,
+        "잡코리아": jobkorea.scrape_finance_jobs,
+        "게임잡": gamejob.scrape_finance_jobs,
+        "공식자체 ATS 어댑터": companies.scrape_official_adapters,
+        "시프트업": companies.scrape_shiftup_finance_jobs
+    }
 
-    # 3-1. 게임잡 수집
-    print("[-] 게임잡(GameJob) 채용 정보 수집 중...")
-    try:
-        gamejob_jobs = gamejob.scrape_finance_jobs()
-        print(f"    -> 게임잡 수집 성공: {len(gamejob_jobs)} 건 발굴")
-        all_postings.extend(gamejob_jobs)
-    except Exception as e:
-        print(f"    [ERR] 게임잡 수집 실패: {e}", file=sys.stderr)
-
-    # 4~8. 공식 게임사 자체 채용페이지 (ATS 어댑터로 통합)
-    #   크래프톤(Greenhouse)·네오위즈(Lever)·카카오게임즈(greetinghr)·펄어비스(정적).
-    #   기존 넥슨/엔씨/넷마블/스마일게이트의 채용 도메인은 폐기·이전된 것으로 라이브 확인되어,
-    #   잡코리아 기업페이지 우회로 별도 단계에서 보강 예정.
-    print("[-] 공식 게임사 자체 채용페이지(ATS 어댑터) 수집 중...")
-    try:
-        official_jobs = companies.scrape_official_adapters()
-        print(f"    -> 공식 자체페이지 수집 성공: {len(official_jobs)} 건 발굴")
-        all_postings.extend(official_jobs)
-    except Exception as e:
-        print(f"    [ERR] 공식 자체페이지 수집 실패: {e}", file=sys.stderr)
-
-    # 8-1. 시프트업 수집
-    print("[-] 시프트업(ShiftUp) 공식 채용공고 수집 중...")
-    try:
-        shiftup_jobs = companies.scrape_shiftup_finance_jobs()
-        print(f"    -> 시프트업 공식 수집 성공: {len(shiftup_jobs)} 건 발굴")
-        all_postings.extend(shiftup_jobs)
-    except Exception as e:
-        print(f"    [ERR] 시프트업 공식 수집 실패: {e}", file=sys.stderr)
+    print("\n[-] requests 기반 스크래퍼 병렬 수집 개시 (ThreadPoolExecutor)...")
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    with ThreadPoolExecutor(max_workers=min(len(parallel_tasks), 4)) as executor:
+        futures = {
+            executor.submit(fetch_with_retry, func, name): name
+            for name, func in parallel_tasks.items()
+        }
+        for future in as_completed(futures):
+            name = futures[future]
+            try:
+                jobs = future.result()
+                all_postings.extend(jobs)
+            except Exception as e:
+                print(f"    [ERR] {name} 스레드 구동 실패: {e}", file=sys.stderr)
 
     # 8-2. [헬스체크] 소스별 수집 건수 점검 — 항상 공고가 있는 플랫폼이 0건이면 스크래퍼 점검 신호.
     #   (게임사 자체수집 0건은 단순 '공고 없음'일 수 있어 경고 대상에서 제외)

@@ -28,6 +28,27 @@ class HTMLGenerator:
             if job_dict.get("tools_used") is None:
                 job_dict["tools_used"] = "EXCEL"
 
+            # 자격증 및 실무 역량 태그의 JSON 리스트 가공 처리 (Milestone 5)
+            # SQLite에 문자열화된 JSON 형태로 보관되어 있으므로, 디코딩하여 프론트엔드로 전달
+            for field in ["preferred_certifications", "preferred_skills_tags"]:
+                val = job_dict.get(field)
+                if val:
+                    try:
+                        job_dict[field] = json.loads(val)
+                    except Exception:
+                        job_dict[field] = []
+                else:
+                    job_dict[field] = []
+
+            # key_requirements, preferred_skills도 문자열 JSON일 때 처리
+            for field in ["key_requirements", "preferred_skills"]:
+                val = job_dict.get(field)
+                if isinstance(val, str):
+                    try:
+                        job_dict[field] = json.loads(val)
+                    except Exception:
+                        job_dict[field] = [val]
+
             job_list.append(job_dict)
 
         # 3. 템플릿 리딩

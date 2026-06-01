@@ -69,15 +69,26 @@ class HybridClassificationEngine:
         if range_match:
             return int(range_match.group(1)), int(range_match.group(2))
 
-        # 2) 3년 이상 형태
-        over_match = re.search(r"(\d+)년이상", norm_text)
+        # 1-1) 경력 1~3년차, 3-5년차 형태
+        range_match_ch = re.search(r"(\d+)[~-](\d+)년차", norm_text)
+        if range_match_ch:
+            return int(range_match_ch.group(1)), int(range_match_ch.group(2))
+
+        # 2) 3년 이상, 3년↑ 형태
+        over_match = re.search(r"(\d+)년(?:이상|차이상|↑)", norm_text)
         if over_match:
             return int(over_match.group(1)), None
 
         # 3) 5년 이하 형태
-        under_match = re.search(r"(\d+)년이하", norm_text)
+        under_match = re.search(r"(\d+)년(?:이하|차이하)", norm_text)
         if under_match:
             return 0, int(under_match.group(1))
+
+        # 3-1) "3년 전후", "3년 내외" 형태
+        approx_match = re.search(r"(\d+)년(?:내외|전후)", norm_text)
+        if approx_match:
+            val = int(approx_match.group(1))
+            return max(0, val - 1), val + 1
 
         # 4) 단순 경력 년 수 언급 (상한은 임의로 단정하지 않고 '이상'으로 처리)
         single_match = re.search(r"경력(\d+)년", norm_text)
@@ -245,6 +256,38 @@ class HybridClassificationEngine:
         if not preferred_skills:
             preferred_skills = ["게임 산업 관심도 우수자", "동종 업계 경험자 우대"]
 
+        # 9. 우대 자격증 및 실무 역량 태깅 (Milestone 5 정교화)
+        preferred_certifications = []
+        preferred_skills_tags = []
+
+        norm_text_lower = analysis_text.lower()
+
+        # 9-1. 자격증 사전식 정밀 추출
+        certs_dict = {
+            "CPA": ["cpa", "한국공인회계사", "공인회계사"],
+            "AICPA": ["aicpa", "uscpa", "미국공인회계사"],
+            "CTA": ["cta", "세무사"],
+            "CFA": ["cfa", "재무분석사"],
+            "FRM": ["frm", "재무위험관리사"]
+        }
+        for cert_key, keywords in certs_dict.items():
+            if any(kw in norm_text_lower for kw in keywords):
+                preferred_certifications.append(cert_key)
+
+        # 9-2. 실무 역량 사전식 정밀 추출
+        skills_dict = {
+            "IFRS": ["ifrs", "국제회계기준", "k-ifrs"],
+            "연결회계": ["연결", "consolidation", "연결결산"],
+            "공시": ["공시", "disclosure", "dart"],
+            "내부회계": ["내부회계", "내부통제", "sox", "내부회계관리제도"],
+            "세무조사": ["세무조사", "tax audit"],
+            "자금조달": ["조달", "funding", "차입"],
+            "원가회계": ["원가", "cost accounting"]
+        }
+        for skill_key, keywords in skills_dict.items():
+            if any(kw in norm_text_lower for kw in keywords):
+                preferred_skills_tags.append(skill_key)
+
         return {
             "job_id": job_posting["id"],
             "primary_category": primary_category,
@@ -258,5 +301,7 @@ class HybridClassificationEngine:
             "key_requirements": key_requirements,
             "preferred_skills": preferred_skills,
             "tools_used": tools,
-            "ai_summary": ai_summary
+            "ai_summary": ai_summary,
+            "preferred_certifications": preferred_certifications,
+            "preferred_skills_tags": preferred_skills_tags
         }

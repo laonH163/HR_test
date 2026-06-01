@@ -48,9 +48,69 @@ class TelegramSender:
             return False
 
     def build_daily_briefing_message(self, newly_added, modified_count, closed_count, active_postings, weekly_trend=None):
-        """당일 수집된 통계 데이터 및 공고 리스트 기반 가독성 높은 텔레그램 카드 메세지 빌딩"""
+        """당일 수집된 통계 데이터 및 공고 리스트 기반 가독성 높은 텔레그램 카드 메세지 빌딩 (중복 디듀프리케이션 포함)"""
         date_str = datetime_str = os.getenv("GITHUB_RUN_ID", "로컬") # 가동 컨텍스트
         run_date = os.getenv('RUN_DATE_STR', datetime_str)
+
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # 중복 제거(Deduplication) 로직 가동 (Milestone 5)
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        def deduplicate_postings(postings_list):
+            deduped = []
+            seen_keys = set()
+            for job in postings_list:
+                comp = job["company_name"].strip()
+                tit = job["title"].strip()
+                # 회사명, 공고명, 요구 연차가 거의 유사하면 동일 공고로 취급
+                exp = job.get("min_experience", 0)
+                # 정규화 키: 회사명 공백제거 + 제목 공백제거 + 최소경력
+                norm_comp = "".join(comp.split()).lower()
+                norm_tit = "".join(tit.split()).lower()
+
+                # 법인 특수기호 등 노이즈 제거 정규화
+                for token in ["(주)", "주식회사", "㈜", "（주）"]:
+                    norm_comp = norm_comp.replace(token, "")
+
+                key = (norm_comp, norm_tit, exp)
+
+                if key in seen_keys:
+                    # 이미 동일 공고가 수집되었으면 출처 정보만 누적 병합
+                    for existing_job in deduped:
+                        exist_comp = "".join(existing_job["company_name"].split()).lower()
+                        for token in ["(주)", "주식회사", "㈜", "（주）"]:
+                            exist_comp = exist_comp.replace(token, "")
+                        exist_tit = "".join(existing_job["title"].split()).lower()
+                        exist_exp = existing_job.get("min_experience", 0)
+
+                        if (exist_comp, exist_tit, exist_exp) == key:
+                            # 멀티 소스 출처 및 지원 링크 병합
+                            if "sources" not in existing_job:
+                                existing_job["sources"] = [{
+                                    "source": existing_job.get("source", "wanted"),
+                                    "url": existing_job.get("origin_url", "")
+                                }]
+
+                            # 신규 출처 중복체크 후 머지
+                            job_src = job.get("source", "wanted")
+                            if not any(s["source"] == job_src for s in existing_job["sources"]):
+                                existing_job["sources"].append({
+                                    "source": job_src,
+                                    "url": job.get("origin_url", "")
+                                })
+                            break
+                else:
+                    seen_keys.add(key)
+                    # 단일 출처 구조 백업
+                    job_copy = job.copy()
+                    job_copy["sources"] = [{
+                        "source": job.get("source", "wanted"),
+                        "url": job.get("origin_url", "")
+                    }]
+                    deduped.append(job_copy)
+            return deduped
+
+        # 전체 활성 공고 중복 제거 가동
+        deduped_active = deduplicate_postings(active_postings)
 
         msg_lines = [
             f"<b>📢 [게임사 재무공고 브리핑]</b>",
@@ -74,10 +134,10 @@ class TelegramSender:
         new_jobs = []
         if newly_added > 0:
             # posted_at 날짜가 오늘 날짜와 일치하는 공고 추출
-            new_jobs = [j for j in active_postings if j.get("posted_at") == run_date]
+            new_jobs = [j for j in deduped_active if j.get("posted_at") == run_date]
             # 만약 날짜 매칭으로 신규 공고가 안 잡힐 때를 대비한 방어적 폴백
             if not new_jobs:
-                new_jobs = active_postings[:newly_added]
+                new_jobs = deduped_active[:newly_added]
 
         # 1. 신규 등록 공고가 있을 때 상단 노출
         if new_jobs:
@@ -86,12 +146,18 @@ class TelegramSender:
                 title_clean = job["title"].replace("<", "&lt;").replace(">", "&gt;")
                 company_clean = job["company_name"].replace("<", "&lt;").replace(">", "&gt;")
                 msg_lines.append(f"• <b>[{company_clean}]</b> {title_clean}")
-                msg_lines.append(f"  👉 <a href='{job['origin_url']}'>지원 공고 바로가기</a>")
+
+                # 멀티 소스 배지/링크 표출 처리 (Milestone 5)
+                links_str = []
+                for s in job["sources"]:
+                    src_upper = s["source"].upper()
+                    links_str.append(f"<a href='{s['url']}'>{src_upper}</a>")
+                msg_lines.append(f"  👉 바로가기: { ' | '.join(links_str) }")
             msg_lines.append("")
 
         # 2. 오늘 신규 등록된 공고를 제외한 기존 채용 진행 중인 공고 나열
         new_job_ids = {j["id"] for j in new_jobs}
-        existing_active_jobs = [j for j in active_postings if j["id"] not in new_job_ids]
+        existing_active_jobs = [j for j in deduped_active if j["id"] not in new_job_ids]
 
         if existing_active_jobs:
             msg_lines.append("<b>💼 기존에 수집된 현재 채용 진행 중인 공고 목록:</b>")
@@ -99,7 +165,13 @@ class TelegramSender:
                 title_clean = job["title"].replace("<", "&lt;").replace(">", "&gt;")
                 company_clean = job["company_name"].replace("<", "&lt;").replace(">", "&gt;")
                 msg_lines.append(f"• <b>[{company_clean}]</b> {title_clean}")
-                msg_lines.append(f"  👉 <a href='{job['origin_url']}'>지원 공고 바로가기</a>")
+
+                # 멀티 소스 배지/링크 표출 처리 (Milestone 5)
+                links_str = []
+                for s in job["sources"]:
+                    src_upper = s["source"].upper()
+                    links_str.append(f"<a href='{s['url']}'>{src_upper}</a>")
+                msg_lines.append(f"  👉 바로가기: { ' | '.join(links_str) }")
             msg_lines.append("")
 
         msg_lines.append("━━━━━━━━━━━━━━━━━━━━")

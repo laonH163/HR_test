@@ -28,7 +28,7 @@
                 <h1 class="text-2xl font-bold tracking-tight">🎮 게임사 재무 채용 대시보드</h1>
                 <p class="text-slate-400 text-sm mt-1">회계·세무·자금·내부통제 공고 정밀 실시간 브리핑</p>
             </div>
-            <div class="text-right">
+            <div class="text-right flex flex-col items-end">
                 <div class="text-xs text-slate-400">최근 업데이트 일시</div>
                 <div class="mono text-sm font-bold text-emerald-400" x-text="updateTime">2026-05-21 12:00:00</div>
             </div>
@@ -53,22 +53,22 @@
                 <div class="text-3xl font-bold mt-2 text-emerald-600" x-text="entryCount()">0</div>
             </div>
             <div class="bg-white p-5 rounded-lg shadow-sm border border-gray-100">
-                <div class="text-xs text-gray-500 font-bold uppercase tracking-wider">최근 7일 신규 공고</div>
-                <div class="text-3xl font-bold mt-2 text-amber-600"><span x-text="(trend && trend.total_new) || 0">0</span><span class="text-base text-gray-400 font-normal"> 건</span></div>
+                <div class="text-xs text-gray-500 font-bold uppercase tracking-wider">북마크 관심 공고</div>
+                <div class="text-3xl font-bold mt-2 text-amber-500" x-text="bookmarks.length">0</div>
             </div>
         </div>
 
         <!-- FILTER & SEARCH BAR -->
         <div class="bg-white p-6 rounded-lg shadow-sm border border-gray-100 mb-8 flex flex-col gap-4">
-            <div class="flex flex-col md:flex-row gap-4">
+            <div class="flex flex-col lg:flex-row gap-4">
                 <!-- Search -->
                 <div class="flex-1">
-                    <label class="block text-xs font-bold text-gray-500 mb-2">키워드 검색 (회사명, 공고명, 사용기술)</label>
-                    <input type="text" x-model="searchQuery" placeholder="예: 시프트업, SAP, 결산, 주2회..."
+                    <label class="block text-xs font-bold text-gray-500 mb-2">키워드 검색 (회사명, 공고명, 사용기술, 태그)</label>
+                    <input type="text" x-model="searchQuery" placeholder="예: 시프트업, SAP, 연결, CPA, 내부회계..."
                            class="w-full px-4 py-2 rounded-lg border border-gray-200 focus:outline-none focus:ring-2 focus:ring-slate-800 text-sm">
                 </div>
                 <!-- Category Filter -->
-                <div class="w-full md:w-48">
+                <div class="w-full lg:w-44">
                     <label class="block text-xs font-bold text-gray-500 mb-2">직무 대분류 필터</label>
                     <select x-model="selectedCategory" class="w-full px-4 py-2 rounded-lg border border-gray-200 focus:outline-none focus:ring-2 focus:ring-slate-800 text-sm bg-white">
                         <option value="all">전체 직무</option>
@@ -79,7 +79,7 @@
                     </select>
                 </div>
                 <!-- Work Type Filter -->
-                <div class="w-full md:w-48">
+                <div class="w-full lg:w-44">
                     <label class="block text-xs font-bold text-gray-500 mb-2">근무형태 필터</label>
                     <select x-model="selectedWorkType" class="w-full px-4 py-2 rounded-lg border border-gray-200 focus:outline-none focus:ring-2 focus:ring-slate-800 text-sm bg-white">
                         <option value="all">전체 형태</option>
@@ -88,6 +88,29 @@
                         <option value="전면출근">전면출근</option>
                     </select>
                 </div>
+                <!-- Personal Filters (Bookmark / Application State) -->
+                <div class="w-full lg:w-44">
+                    <label class="block text-xs font-bold text-gray-500 mb-2">내 활동 상태 필터</label>
+                    <select x-model="selectedPersonalFilter" class="w-full px-4 py-2 rounded-lg border border-gray-200 focus:outline-none focus:ring-2 focus:ring-slate-800 text-sm bg-white">
+                        <option value="all">전체 보기</option>
+                        <option value="bookmarked">⭐ 북마크한 공고</option>
+                        <option value="applied">💼 지원 완료한 공고</option>
+                        <option value="not_applied">⏳ 미지원 공고</option>
+                        <option value="memo">📝 개인 메모 있는 공고</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Custom Tags (CPA, IFRS 등) Quick Filter -->
+            <div class="border-t border-gray-100 pt-3 flex flex-wrap gap-2 items-center">
+                <span class="text-xs font-bold text-gray-400 mr-2">인기 태그 퀵필터:</span>
+                <button @click="toggleTagFilter('CPA')" :class="activeTagFilters.includes('CPA') ? 'bg-amber-500 text-white border-amber-500' : 'bg-gray-100 text-gray-600 hover:bg-gray-200 border-transparent'" class="px-2 py-1 text-xs font-semibold rounded-md border transition-colors">🎓 CPA</button>
+                <button @click="toggleTagFilter('AICPA')" :class="activeTagFilters.includes('AICPA') ? 'bg-amber-500 text-white border-amber-500' : 'bg-gray-100 text-gray-600 hover:bg-gray-200 border-transparent'" class="px-2 py-1 text-xs font-semibold rounded-md border transition-colors">🇺🇸 AICPA</button>
+                <button @click="toggleTagFilter('IFRS')" :class="activeTagFilters.includes('IFRS') ? 'bg-teal-600 text-white border-teal-600' : 'bg-gray-100 text-gray-600 hover:bg-gray-200 border-transparent'" class="px-2 py-1 text-xs font-semibold rounded-md border transition-colors">✨ IFRS</button>
+                <button @click="toggleTagFilter('연결회계')" :class="activeTagFilters.includes('연결회계') ? 'bg-teal-600 text-white border-teal-600' : 'bg-gray-100 text-gray-600 hover:bg-gray-200 border-transparent'" class="px-2 py-1 text-xs font-semibold rounded-md border transition-colors">🔗 연결회계</button>
+                <button @click="toggleTagFilter('내부회계')" :class="activeTagFilters.includes('내부회계') ? 'bg-teal-600 text-white border-teal-600' : 'bg-gray-100 text-gray-600 hover:bg-gray-200 border-transparent'" class="px-2 py-1 text-xs font-semibold rounded-md border transition-colors">🛡️ 내부회계</button>
+                <button @click="toggleTagFilter('공시')" :class="activeTagFilters.includes('공시') ? 'bg-teal-600 text-white border-teal-600' : 'bg-gray-100 text-gray-600 hover:bg-gray-200 border-transparent'" class="px-2 py-1 text-xs font-semibold rounded-md border transition-colors">📢 공시</button>
+                <button x-show="activeTagFilters.length > 0" @click="activeTagFilters = []" class="text-xs text-rose-600 hover:underline font-bold ml-2">태그 필터 해제</button>
             </div>
 
             <!-- Experience Range Slider -->
@@ -105,7 +128,7 @@
 
             <div class="p-4 bg-slate-50 border-b border-gray-100 flex justify-between items-center">
                 <h3 class="font-bold text-slate-800 text-sm">목록 결과 (<span x-text="filteredJobs().length">0</span>건 매칭)</h3>
-                <div class="text-xs text-gray-400">데이터를 클릭하면 본문 세부 내용 요약이 열립니다.</div>
+                <div class="text-xs text-gray-400">공고 행을 터치하면 상세 AI 요약 및 자격/우대 요건, 개인 노트 영역이 펼쳐집니다.</div>
             </div>
 
             <!-- DESKTOP TABLE -->
@@ -113,28 +136,48 @@
                 <table class="w-full text-left text-sm">
                     <thead class="bg-gray-100 text-gray-600 font-bold uppercase text-xs">
                         <tr>
+                            <th class="px-6 py-4 w-12 text-center">⭐</th>
                             <th class="px-6 py-4">회사명</th>
                             <th class="px-6 py-4">공고 제목</th>
                             <th class="px-6 py-4">직무 대분류</th>
                             <th class="px-6 py-4">요구 경력</th>
                             <th class="px-6 py-4">근무 형태</th>
-                            <th class="px-6 py-4">주요 ERP / 도구</th>
-                            <th class="px-6 py-4">출처</th>
-                            <th class="px-6 py-4">동작</th>
+                            <th class="px-6 py-4">출처 플랫폼</th>
+                            <th class="px-6 py-4">활동 기록</th>
+                            <th class="px-6 py-4">지원하기</th>
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-gray-100">
                         <template x-for="job in filteredJobs()" :key="job.id">
-                            <tr class="hover:bg-slate-50 transition-colors">
-                                <td class="px-6 py-4 font-bold text-slate-800" x-text="job.company_name">회사명</td>
+                            <tr class="hover:bg-slate-50 transition-colors" :class="isApplied(job.id) ? 'bg-slate-50/50 opacity-75' : ''">
+                                <!-- Bookmark Star -->
+                                <td class="px-6 py-4 text-center">
+                                    <button @click.stop="toggleBookmark(job.id)" class="text-lg focus:outline-none transition-transform hover:scale-125" :class="isBookmarked(job.id) ? 'text-amber-400' : 'text-gray-300 hover:text-amber-400'">
+                                        <span x-text="isBookmarked(job.id) ? '★' : '☆'"></span>
+                                    </button>
+                                </td>
+                                <!-- Company Name & Brand Preset Logo Badge -->
                                 <td class="px-6 py-4">
-                                    <div class="font-medium text-blue-600 hover:underline cursor-pointer"
+                                    <div class="font-bold text-slate-800 flex items-center gap-1.5" x-text="job.company_name">회사명</div>
+                                    <div class="mono text-[10px] text-gray-400 mt-0.5" x-text="getCompanyScale(job)">매출액</div>
+                                </td>
+                                <!-- Job Title & Badges -->
+                                <td class="px-6 py-4">
+                                    <div class="font-medium text-blue-600 hover:underline cursor-pointer flex items-center gap-1.5"
                                          x-text="job.title" @click="toggleDetails(job.id)">제목</div>
-                                    <div class="flex items-center gap-2 mt-1">
-                                        <span class="text-xs text-gray-400" x-text="job.location">근무지</span>
+                                    <div class="flex flex-wrap items-center gap-1.5 mt-1">
+                                        <span class="text-xs text-gray-400" x-text="job.location || '근무지 확인 필요'">근무지</span>
                                         <span class="px-1.5 py-0.5 text-[10px] rounded font-bold mono" :class="getDaysBadgeClass(job)" x-text="getDaysBadge(job)"></span>
+                                        <!-- Cert & Skill tags badges -->
+                                        <template x-for="cert in job.preferred_certifications" :key="cert">
+                                            <span class="px-1.5 py-0.5 text-[10px] rounded font-bold bg-amber-100 text-amber-800">🎓 <span x-text="cert"></span></span>
+                                        </template>
+                                        <template x-for="skill in job.preferred_skills_tags" :key="skill">
+                                            <span class="px-1.5 py-0.5 text-[10px] rounded font-bold bg-teal-50 text-teal-800">✨ <span x-text="skill"></span></span>
+                                        </template>
                                     </div>
                                 </td>
+                                <!-- Primary Category -->
                                 <td class="px-6 py-4">
                                     <span class="px-2 py-1 text-xs rounded font-bold"
                                           :class="{
@@ -144,47 +187,78 @@
                                               'bg-purple-100 text-purple-800': job.primary_category === '내부통제'
                                           }" x-text="job.primary_category">분류</span>
                                 </td>
+                                <!-- Experience Requirement -->
                                 <td class="px-6 py-4 mono" x-text="getExperienceStr(job)">연차</td>
-                                <td class="px-6 py-4 text-xs font-semibold" x-text="job.work_type">근무형태</td>
+                                <!-- Work Type -->
+                                <td class="px-6 py-4 text-xs font-semibold text-slate-700" x-text="job.work_type">근무형태</td>
+                                <!-- Deduplicated Multiple Sources Badges -->
                                 <td class="px-6 py-4">
-                                    <span class="mono px-1.5 py-0.5 bg-gray-100 text-gray-700 text-xs rounded font-bold" x-text="job.tools_used">TOOLS</span>
+                                    <div class="flex flex-wrap gap-1">
+                                        <template x-for="s in job.sources" :key="s.source">
+                                            <a :href="s.url" target="_blank" class="px-1.5 py-0.5 text-[10px] font-bold rounded uppercase bg-slate-100 text-slate-600 hover:bg-slate-200" x-text="s.source"></a>
+                                        </template>
+                                    </div>
                                 </td>
-                                <td class="px-6 py-4 uppercase text-xs font-bold text-gray-400" x-text="job.source">wanted</td>
+                                <!-- Application Status Selector -->
                                 <td class="px-6 py-4">
-                                    <a :href="job.origin_url" target="_blank" class="text-xs bg-slate-800 text-white px-3 py-1.5 rounded hover:bg-slate-700 font-bold">지원하기</a>
+                                    <select @change="setApplicationState(job.id, $event.target.value)" class="text-xs bg-gray-50 border border-gray-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-slate-800">
+                                        <option value="none" :selected="getApplicationState(job.id) === 'none'">⏳ 지원 예정</option>
+                                        <option value="applied" :selected="getApplicationState(job.id) === 'applied'">💼 지원 완료</option>
+                                        <option value="passed" :selected="getApplicationState(job.id) === 'passed'">🎉 서류 합격</option>
+                                        <option value="rejected" :selected="getApplicationState(job.id) === 'rejected'">❌ 불합격</option>
+                                    </select>
+                                </td>
+                                <!-- Main Application Action Link -->
+                                <td class="px-6 py-4">
+                                    <a :href="job.origin_url" target="_blank" class="text-xs bg-slate-800 text-white px-3 py-1.5 rounded hover:bg-slate-700 font-bold inline-block text-center whitespace-nowrap">지원하기</a>
                                 </td>
                             </tr>
                             <!-- DETAIL ACCORDION ROW -->
                             <tr x-show="activeDetails.includes(job.id)" class="bg-slate-50/70" x-transition>
-                                <td colspan="8" class="px-8 py-6 border-b border-gray-200">
-                                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                        <!-- AI 요약 -->
-                                        <div>
-                                            <h4 class="font-bold text-slate-800 text-sm mb-3">📋 AI 한글 3줄 분석 요약</h4>
-                                            <div class="bg-white p-4 rounded-lg border border-gray-100 text-xs text-slate-700 leading-relaxed whitespace-pre-line" x-text="job.ai_summary"></div>
+                                <td colspan="9" class="px-8 py-6 border-b border-gray-200">
+                                    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                                        <!-- AI 요약 & 태그 정보 -->
+                                        <div class="space-y-4">
+                                            <div>
+                                                <h4 class="font-bold text-slate-800 text-sm mb-2 flex items-center gap-1.5">📋 AI 실무 3줄 요약</h4>
+                                                <div class="bg-white p-4 rounded-lg border border-gray-100 text-xs text-slate-700 leading-relaxed whitespace-pre-line" x-text="job.ai_summary"></div>
+                                            </div>
+                                            <!-- ERP / Tools -->
+                                            <div class="flex items-center gap-2">
+                                                <span class="text-xs font-bold text-slate-500">주요 실무 툴:</span>
+                                                <span class="mono px-2 py-0.5 bg-slate-100 text-slate-700 text-xs rounded font-bold" x-text="job.tools_used || 'EXCEL'"></span>
+                                            </div>
                                         </div>
                                         <!-- 자격요건 & 우대사항 -->
                                         <div class="space-y-4">
                                             <div>
-                                                <h4 class="font-bold text-emerald-800 text-sm mb-2">📌 필수 자격 요건</h4>
+                                                <h4 class="font-bold text-emerald-800 text-sm mb-1.5">📌 필수 자격 요건</h4>
                                                 <ul class="list-disc pl-4 text-xs text-slate-600 space-y-1">
-                                                    <template x-for="req in parseJsonList(job.key_requirements)" :key="req">
+                                                    <template x-for="req in job.key_requirements" :key="req">
                                                         <li x-text="req"></li>
                                                     </template>
                                                 </ul>
                                             </div>
                                             <div>
-                                                <h4 class="font-bold text-indigo-800 text-sm mb-2">🎁 우대 사항</h4>
+                                                <h4 class="font-bold text-indigo-800 text-sm mb-1.5">🎁 우대 자격 및 요건</h4>
                                                 <ul class="list-disc pl-4 text-xs text-slate-600 space-y-1">
-                                                    <template x-for="pref in parseJsonList(job.preferred_skills)" :key="pref">
+                                                    <template x-for="pref in job.preferred_skills" :key="pref">
                                                         <li x-text="pref"></li>
                                                     </template>
                                                 </ul>
                                             </div>
                                         </div>
+                                        <!-- 개인 메모 / 메모 관리 플래너 (Milestone 5) -->
+                                        <div>
+                                            <h4 class="font-bold text-amber-800 text-sm mb-2 flex items-center gap-1.5">📝 개인 구직 메모 및 일정</h4>
+                                            <textarea @input="setMemo(job.id, $event.target.value)" :value="getMemo(job.id)"
+                                                      placeholder="지원 일정, 예상 면접 질문, 담당 헤드헌터 연락처 등 자유롭게 메모하세요. (자동 저장됩니다)"
+                                                      class="w-full h-32 p-3 text-xs rounded-lg border border-gray-200 focus:outline-none focus:ring-1 focus:ring-amber-500 bg-amber-50/20 text-slate-700 leading-relaxed resize-none"></textarea>
+                                        </div>
                                     </div>
-                                    <div class="mt-4 pt-4 border-t border-gray-100 flex justify-end">
-                                        <button @click="toggleDetails(job.id)" class="text-xs text-gray-500 font-bold hover:underline">상세 정보 닫기</button>
+                                    <div class="mt-4 pt-4 border-t border-gray-100 flex justify-between items-center">
+                                        <div class="text-xs text-gray-400 mono">공고 식별코드: <span x-text="job.id"></span></div>
+                                        <button @click="toggleDetails(job.id)" class="text-xs text-gray-500 font-bold hover:underline">상세 정보 접기</button>
                                     </div>
                                 </td>
                             </tr>
@@ -196,24 +270,33 @@
             <!-- MOBILE CARD VIEW -->
             <div class="block lg:hidden divide-y divide-gray-100">
                 <template x-for="job in filteredJobs()" :key="job.id">
-                    <div class="p-5 hover:bg-slate-50 transition-colors">
+                    <div class="p-5 hover:bg-slate-50 transition-colors" :class="isApplied(job.id) ? 'bg-slate-50/50 opacity-75' : ''">
                         <div class="flex justify-between items-start gap-2 mb-3">
-                            <span class="px-2 py-0.5 text-[10px] rounded font-bold"
-                                  :class="{
-                                      'bg-emerald-100 text-emerald-800': job.primary_category === '회계',
-                                      'bg-amber-100 text-amber-800': job.primary_category === '세무',
-                                      'bg-indigo-100 text-indigo-800': job.primary_category === '재무/자금',
-                                      'bg-purple-100 text-purple-800': job.primary_category === '내부통제'
-                                  }" x-text="job.primary_category">분류</span>
-                            <span class="text-[10px] font-bold text-slate-400 uppercase" x-text="job.source">WANTED</span>
+                            <div class="flex items-center gap-1.5">
+                                <span class="px-2 py-0.5 text-[10px] rounded font-bold"
+                                      :class="{
+                                          'bg-emerald-100 text-emerald-800': job.primary_category === '회계',
+                                          'bg-amber-100 text-amber-800': job.primary_category === '세무',
+                                          'bg-indigo-100 text-indigo-800': job.primary_category === '재무/자금',
+                                          'bg-purple-100 text-purple-800': job.primary_category === '내부통제'
+                                      }" x-text="job.primary_category">분류</span>
+                                <!-- Cert & Skill tags badges -->
+                                <template x-for="cert in job.preferred_certifications" :key="cert">
+                                    <span class="px-1 py-0.5 text-[9px] rounded font-bold bg-amber-100 text-amber-800">🎓 <span x-text="cert"></span></span>
+                                </template>
+                            </div>
+                            <!-- Mobile Bookmark Star -->
+                            <button @click.stop="toggleBookmark(job.id)" class="text-lg focus:outline-none" :class="isBookmarked(job.id) ? 'text-amber-400' : 'text-gray-300'">
+                                <span x-text="isBookmarked(job.id) ? '★' : '☆'"></span>
+                            </button>
                         </div>
                         <h4 class="font-bold text-slate-800 text-base" x-text="job.company_name">더블유게임즈</h4>
                         <h5 class="font-medium text-blue-600 text-sm mt-1 cursor-pointer hover:underline"
                             x-text="job.title" @click="toggleDetails(job.id)">제목</h5>
-                        <div class="flex flex-wrap gap-2 mt-3 text-xs text-slate-500">
+                        <div class="flex flex-wrap gap-1.5 mt-3 text-[11px] text-slate-500">
                             <span class="bg-gray-100 px-2 py-0.5 rounded" x-text="getExperienceStr(job)">경력 무관</span>
                             <span class="bg-gray-100 px-2 py-0.5 rounded" x-text="job.work_type">근무형태</span>
-                            <span class="px-2 py-0.5 rounded font-bold mono" :class="getDaysBadgeClass(job)" x-text="getDaysBadge(job)"></span>
+                            <span class="px-2 py-0.5 rounded font-bold mono text-[10px]" :class="getDaysBadgeClass(job)" x-text="getDaysBadge(job)"></span>
                         </div>
 
                         <!-- Mobile Details (Accordion) -->
@@ -225,7 +308,7 @@
                                 <div>
                                     <div class="font-bold text-xs text-emerald-800 mb-1">📌 필수 요건</div>
                                     <ul class="list-disc pl-4 text-[11px] text-slate-600 space-y-0.5">
-                                        <template x-for="req in parseJsonList(job.key_requirements)" :key="req">
+                                        <template x-for="req in job.key_requirements" :key="req">
                                             <li x-text="req"></li>
                                         </template>
                                     </ul>
@@ -233,17 +316,39 @@
                                 <div>
                                     <div class="font-bold text-xs text-indigo-800 mb-1">🎁 우대 사항</div>
                                     <ul class="list-disc pl-4 text-[11px] text-slate-600 space-y-0.5">
-                                        <template x-for="pref in parseJsonList(job.preferred_skills)" :key="pref">
+                                        <template x-for="pref in job.preferred_skills" :key="pref">
                                             <li x-text="pref"></li>
                                         </template>
                                     </ul>
                                 </div>
                             </div>
+                            <!-- Mobile Memory Section -->
+                            <div class="border-t border-gray-100 pt-3">
+                                <div class="font-bold text-xs text-amber-800 mb-1.5">📝 개인 구직 메모</div>
+                                <textarea @input="setMemo(job.id, $event.target.value)" :value="getMemo(job.id)"
+                                          placeholder="이곳에 메모를 적으면 브라우저에 자동 세이브됩니다"
+                                          class="w-full h-24 p-2 text-xs rounded-lg border border-gray-200 focus:outline-none focus:ring-1 focus:ring-amber-500 bg-amber-50/10 text-slate-700 leading-relaxed resize-none"></textarea>
+                            </div>
                         </div>
 
-                        <div class="flex justify-between items-center mt-4 pt-4 border-t border-gray-100/50">
-                            <button @click="toggleDetails(job.id)" class="text-xs text-slate-500 font-bold hover:underline" x-text="activeDetails.includes(job.id) ? '상세 접기' : '상세 열기'"></button>
-                            <a :href="job.origin_url" target="_blank" class="text-xs bg-slate-800 text-white px-4 py-2 rounded hover:bg-slate-700 font-bold">지원 링크 이동</a>
+                        <!-- Mobile Status & Multi Links footer -->
+                        <div class="flex flex-col sm:flex-row gap-3 justify-between items-stretch sm:items-center mt-4 pt-4 border-t border-gray-100/50">
+                            <!-- Mobile Status Switcher -->
+                            <div class="flex items-center gap-2">
+                                <span class="text-xs text-gray-400 whitespace-nowrap">상태:</span>
+                                <select @change="setApplicationState(job.id, $event.target.value)" class="text-xs bg-gray-50 border border-gray-200 rounded px-2 py-1 w-full sm:w-auto focus:outline-none">
+                                    <option value="none" :selected="getApplicationState(job.id) === 'none'">⏳ 지원 예정</option>
+                                    <option value="applied" :selected="getApplicationState(job.id) === 'applied'">💼 지원 완료</option>
+                                    <option value="passed" :selected="getApplicationState(job.id) === 'passed'">🎉 서류 합격</option>
+                                    <option value="rejected" :selected="getApplicationState(job.id) === 'rejected'">❌ 불합격</option>
+                                </select>
+                            </div>
+                            <!-- Mobile Multi-links or Single Link -->
+                            <div class="flex items-center gap-1.5 justify-end">
+                                <template x-for="s in job.sources" :key="s.source">
+                                    <a :href="s.url" target="_blank" class="text-[11px] bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-2 rounded font-bold uppercase text-center flex-1" x-text="s.source">WANTED</a>
+                                </template>
+                            </div>
                         </div>
                     </div>
                 </template>
@@ -268,44 +373,198 @@
 
         function dashboardApp() {
             return {
-                jobs: JOBS_DATA,
+                jobs: [],
                 updateTime: UPDATE_TIME_STRING,
                 trend: SCRAPE_TREND,
                 searchQuery: '',
                 selectedCategory: 'all',
                 selectedWorkType: 'all',
+                selectedPersonalFilter: 'all',
                 maxExperienceFilter: '15',
                 activeDetails: [],
+                activeTagFilters: [], // CPA, IFRS, 내부회계 등
+
+                // LocalStorage 연동 변수 (로컬 구직 활동 플래너 세션)
+                bookmarks: [],          // [job_id, ...]
+                applicationStates: {},  // {job_id: 'applied' | 'passed' | ...}
+                memos: {},              // {job_id: '내용'}
 
                 init() {
-                    // 기본 초기화 동작
+                    this.loadLocalData();
+                    this.processRawJobsData();
                 },
 
+                // 수집처 중복 공고 디듀프리케이션(De-duplication) 가공 처리
+                processRawJobsData() {
+                    const rawList = JOBS_DATA;
+                    const deduped = [];
+                    const seenKeys = {};
+
+                    rawList.forEach(job => {
+                        const comp = job.company_name.trim();
+                        const tit = job.title.trim();
+                        const exp = job.min_experience || 0;
+
+                        // 중복 판별 정규화 키 수립
+                        let normComp = comp.replace(/\s+/g, '').toLowerCase();
+                        for (const token of ["(주)", "주식회사", "㈜", "（주）"]) {
+                            normComp = normComp.split(token).join("");
+                        }
+                        const normTit = tit.replace(/\s+/g, '').toLowerCase();
+                        const key = normComp + "_" + normTit + "_" + exp;
+
+                        if (seenKeys[key] !== undefined) {
+                            // 이미 리스트에 담긴 동일 공고가 있다면 소스 출처만 합산 병합
+                            const existingIdx = seenKeys[key];
+                            const existingJob = deduped[existingIdx];
+                            if (!existingJob.sources.some(s => s.source === job.source)) {
+                                existingJob.sources.push({
+                                    source: job.source,
+                                    url: job.origin_url
+                                });
+                            }
+                        } else {
+                            // 신규 등록
+                            const jobCopy = Object.assign({}, job);
+                            jobCopy.sources = [{
+                                source: job.source,
+                                url: job.origin_url
+                            }];
+                            deduped.push(jobCopy);
+                            seenKeys[key] = deduped.length - 1;
+                        }
+                    });
+
+                    this.jobs = deduped;
+                },
+
+                // 브라우저 로컬 저장소 로딩
+                loadLocalData() {
+                    try {
+                        const localBookmarks = localStorage.getItem("gfs_bookmarks");
+                        const localStates = localStorage.getItem("gfs_app_states");
+                        const localMemos = localStorage.getItem("gfs_memos");
+
+                        if (localBookmarks) this.bookmarks = JSON.parse(localBookmarks);
+                        if (localStates) this.applicationStates = JSON.parse(localStates);
+                        if (localMemos) this.memos = JSON.parse(localMemos);
+                    } catch (e) {
+                        console.error("[DFS ERR] 로컬 저장소 스토리지 파싱 실패: ", e);
+                    }
+                },
+
+                // 필터링 전체 파이프라인
                 filteredJobs() {
                     return this.jobs.filter(job => {
-                        // 1. 키워드 검색 (회사명, 공고명, AI요약 텍스트 포함 체크)
+                        // 1. 텍스트 및 기본 키워드 필터링
                         const q = this.searchQuery.toLowerCase();
+                        const toolsText = (job.tools_used || "EXCEL").toLowerCase();
+                        const aiText = (job.ai_summary || "").toLowerCase();
+                        const certsText = (job.preferred_certifications || []).join(" ").toLowerCase();
+                        const skillsText = (job.preferred_skills_tags || []).join(" ").toLowerCase();
+
                         const matchQuery = !q ||
                             job.company_name.toLowerCase().includes(q) ||
                             job.title.toLowerCase().includes(q) ||
-                            job.tools_used.toLowerCase().includes(q) ||
-                            job.ai_summary.toLowerCase().includes(q);
+                            toolsText.includes(q) ||
+                            certsText.includes(q) ||
+                            skillsText.includes(q) ||
+                            aiText.includes(q);
 
-                        // 2. 대분류 필터
+                        // 2. 대분류 필터링
                         const matchCat = this.selectedCategory === 'all' || job.primary_category === this.selectedCategory;
 
-                        // 3. 근무형태 필터
+                        // 3. 근무형태 필터링
                         const matchWork = this.selectedWorkType === 'all' || job.work_type === this.selectedWorkType;
 
-                        // 4. 요구 연차 필터 (예: 슬라이더 3년 이하인 공고만 필터할 때, min_experience가 3 이하인지 비교)
+                        // 4. 요구 최소 연차 필터링
                         let matchExp = true;
                         if (this.maxExperienceFilter !== '15') {
                             const maxLimit = parseInt(this.maxExperienceFilter);
                             matchExp = job.min_experience <= maxLimit;
                         }
 
-                        return matchQuery && matchCat && matchWork && matchExp;
+                        // 5. 내 구직활동 편의 상태값 필터링
+                        let matchPersonal = true;
+                        if (this.selectedPersonalFilter === 'bookmarked') {
+                            matchPersonal = this.isBookmarked(job.id);
+                        } else if (this.selectedPersonalFilter === 'applied') {
+                            matchPersonal = this.isApplied(job.id);
+                        } else if (this.selectedPersonalFilter === 'not_applied') {
+                            matchPersonal = !this.isApplied(job.id);
+                        } else if (this.selectedPersonalFilter === 'memo') {
+                            matchPersonal = !!this.memos[job.id];
+                        }
+
+                        // 6. 태그 퀵 필터링 (다중 교집합 필터)
+                        let matchTags = true;
+                        if (this.activeTagFilters.length > 0) {
+                            matchTags = this.activeTagFilters.every(tag => {
+                                if (tag === 'CPA' || tag === 'AICPA') {
+                                    return (job.preferred_certifications || []).includes(tag);
+                                }
+                                return (job.preferred_skills_tags || []).includes(tag);
+                            });
+                        }
+
+                        return matchQuery && matchCat && matchWork && matchExp && matchPersonal && matchTags;
                     });
+                },
+
+                // 퀵태그 필터 핸들링
+                toggleTagFilter(tag) {
+                    if (this.activeTagFilters.includes(tag)) {
+                        this.activeTagFilters = this.activeTagFilters.filter(t => t !== tag);
+                    } else {
+                        this.activeTagFilters.push(tag);
+                    }
+                },
+
+                // 북마크 핸들러
+                toggleBookmark(id) {
+                    if (this.bookmarks.includes(id)) {
+                        this.bookmarks = this.bookmarks.filter(b => b !== id);
+                    } else {
+                        this.bookmarks.push(id);
+                    }
+                    localStorage.setItem("gfs_bookmarks", JSON.stringify(this.bookmarks));
+                },
+
+                isBookmarked(id) {
+                    return this.bookmarks.includes(id);
+                },
+
+                // 지원 상태값 및 메모 관리 API
+                setApplicationState(id, state) {
+                    if (state === "none") {
+                        delete this.applicationStates[id];
+                    } else {
+                        this.applicationStates[id] = state;
+                    }
+                    localStorage.setItem("gfs_app_states", JSON.stringify(this.applicationStates));
+                },
+
+                getApplicationState(id) {
+                    return this.applicationStates[id] || 'none';
+                },
+
+                isApplied(id) {
+                    const state = this.getApplicationState(id);
+                    return state !== 'none' && state !== 'rejected';
+                },
+
+                setMemo(id, content) {
+                    const cleanContent = content.trim();
+                    if (!cleanContent) {
+                        delete this.memos[id];
+                    } else {
+                        this.memos[id] = content;
+                    }
+                    localStorage.setItem("gfs_memos", JSON.stringify(this.memos));
+                },
+
+                getMemo(id) {
+                    return this.memos[id] || '';
                 },
 
                 toggleDetails(id) {
@@ -325,8 +584,20 @@
                     return `경력 ${min}${max}`;
                 },
 
+                getCompanyScale(job) {
+                    const rev = job.company_revenue;
+                    const size = job.company_size;
+                    if (rev && size) {
+                        return `매출 ${rev.toLocaleString()}억 · ${size.toLocaleString()}명 규모`;
+                    } else if (rev) {
+                        return `매출 ${rev.toLocaleString()}억 규모`;
+                    } else if (size) {
+                        return `${size.toLocaleString()}명 규모`;
+                    }
+                    return "중소·스타트업 규모";
+                },
+
                 getDaysOpen(job) {
-                    // 최초 수집 시점(first_seen_at)부터 대시보드 갱신 시점까지 경과 일수
                     if (!job.first_seen_at) return null;
                     const seen = new Date(String(job.first_seen_at).replace(' ', 'T'));
                     const now = new Date(String(UPDATE_TIME_STRING).replace(' ', 'T'));
@@ -351,14 +622,6 @@
                     return 'bg-slate-100 text-slate-600';
                 },
 
-                parseJsonList(jsonStr) {
-                    try {
-                        return JSON.parse(jsonStr);
-                    } catch(e) {
-                        return [jsonStr];
-                    }
-                },
-
                 remoteCount() {
                     return this.jobs.filter(j => j.work_type !== '전면출근').length;
                 },
@@ -371,7 +634,9 @@
                     this.searchQuery = '';
                     this.selectedCategory = 'all';
                     this.selectedWorkType = 'all';
+                    this.selectedPersonalFilter = 'all';
                     this.maxExperienceFilter = '15';
+                    this.activeTagFilters = [];
                 }
             }
         }

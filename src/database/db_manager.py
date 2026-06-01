@@ -87,6 +87,27 @@ class DBManager:
         conn.commit()
         conn.close()
 
+        # [안전 점진적 마이그레이션] 테이블 생성 이후 미래지향적 확장을 위해 안전하게 새 컬럼 추가
+        self._add_column_if_not_exists("job_categories", "preferred_certifications", "TEXT") # 자격증 태그 (JSON)
+        self._add_column_if_not_exists("job_categories", "preferred_skills_tags", "TEXT")     # 실무 역량 태그 (JSON)
+
+    def _add_column_if_not_exists(self, table_name, column_name, column_type):
+        """기존 테이블에 컬럼이 없을 때 안전하게 ALTER TABLE을 가동하는 마이그레이션 도우미"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(f"PRAGMA table_info({table_name})")
+            columns = [info[1] for info in cursor.fetchall()]
+            if column_name not in columns:
+                cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}")
+                conn.commit()
+                print(f"    [DB Migration] {table_name} 테이블에 '{column_name}' 컬럼을 안전하게 마이그레이션 추가했습니다.")
+        except Exception as e:
+            import sys
+            print(f"    [DB ERR] 마이그레이션 추가 실패 ({table_name}.{column_name}): {e}", file=sys.stderr)
+        finally:
+            conn.close()
+
     def upsert_job_posting(self, posting):
         """
         job_posting 정보를 Upsert하고, 변경사항이 존재한다면 True를 반환.
@@ -142,8 +163,9 @@ class DBManager:
             INSERT INTO job_categories (
                 job_id, primary_category, min_experience, max_experience,
                 salary_min, salary_max, work_type, company_revenue, company_size,
-                key_requirements, preferred_skills, tools_used, ai_summary
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                key_requirements, preferred_skills, tools_used, ai_summary,
+                preferred_certifications, preferred_skills_tags
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(job_id) DO UPDATE SET
                 primary_category=excluded.primary_category,
                 min_experience=excluded.min_experience,
@@ -156,14 +178,18 @@ class DBManager:
                 key_requirements=excluded.key_requirements,
                 preferred_skills=excluded.preferred_skills,
                 tools_used=excluded.tools_used,
-                ai_summary=excluded.ai_summary
+                ai_summary=excluded.ai_summary,
+                preferred_certifications=excluded.preferred_certifications,
+                preferred_skills_tags=excluded.preferred_skills_tags
         """, (
             category["job_id"], category["primary_category"], category.get("min_experience"), category.get("max_experience"),
             category.get("salary_min"), category.get("salary_max"), category["work_type"],
             category.get("company_revenue"), category.get("company_size"),
             json.dumps(category.get("key_requirements", []), ensure_ascii=False),
             json.dumps(category.get("preferred_skills", []), ensure_ascii=False),
-            category.get("tools_used"), category["ai_summary"]
+            category.get("tools_used"), category["ai_summary"],
+            json.dumps(category.get("preferred_certifications", []), ensure_ascii=False),
+            json.dumps(category.get("preferred_skills_tags", []), ensure_ascii=False)
         ))
 
         conn.commit()
@@ -193,7 +219,8 @@ class DBManager:
                    p.posted_at, p.status, p.first_seen_at, p.last_updated_at,
                    c.primary_category, c.min_experience, c.max_experience,
                    c.salary_min, c.salary_max, c.work_type, c.company_revenue, c.company_size,
-                   c.key_requirements, c.preferred_skills, c.tools_used, c.ai_summary
+                   c.key_requirements, c.preferred_skills, c.tools_used, c.ai_summary,
+                   c.preferred_certifications, c.preferred_skills_tags
             FROM job_postings p
             LEFT JOIN job_categories c ON p.id = c.job_id
             WHERE p.status = 'ACTIVE'

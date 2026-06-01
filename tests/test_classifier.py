@@ -39,12 +39,32 @@ class TestClassifierAndDelta(unittest.TestCase):
         self.assertEqual(min_exp, 3)
         self.assertEqual(max_exp, 5)
 
+        # 1-1) 년차 범위 추출 검증
+        min_exp, max_exp = self.engine.extract_experience("경력 1~3년차 모집")
+        self.assertEqual(min_exp, 1)
+        self.assertEqual(max_exp, 3)
+
         # 2) 이상 조건 추출
         min_exp, max_exp = self.engine.extract_experience("자격 요건: 관련 직무 5년 이상 소유자")
         self.assertEqual(min_exp, 5)
         self.assertIsNone(max_exp)
 
-        # 3) 신입 지원 가능
+        # 2-1) 화살표 이상 추출 검증
+        min_exp, max_exp = self.engine.extract_experience("경력: 3년↑")
+        self.assertEqual(min_exp, 3)
+        self.assertIsNone(max_exp)
+
+        # 3) 5년 이하 형태
+        min_exp, max_exp = self.engine.extract_experience("자격요건: 경력 5년 이하")
+        self.assertEqual(min_exp, 0)
+        self.assertEqual(max_exp, 5)
+
+        # 3-1) 전후/내외 추출 검증
+        min_exp, max_exp = self.engine.extract_experience("회계 결산 3년 전후 경력자")
+        self.assertEqual(min_exp, 2)
+        self.assertEqual(max_exp, 4)
+
+        # 3-2) 신입 지원 가능
         min_exp, max_exp = self.engine.extract_experience("신입 채용 공고 (초보자 지원 가능)")
         self.assertEqual(min_exp, 0)
         self.assertEqual(max_exp, 1)
@@ -76,6 +96,31 @@ class TestClassifierAndDelta(unittest.TestCase):
         min_exp, max_exp = self.engine.extract_experience("대리 급여 정산 업무 담당")
         self.assertEqual(min_exp, 0)
         self.assertIsNone(max_exp)
+
+    def test_cert_and_skill_tagging(self):
+        """우대 자격증 및 핵심 실무 역량 태깅 검증"""
+        # CPA 및 IFRS, 연결회계 추출 검증
+        posting = {
+            "id": "tag_1",
+            "company_name": "네오위즈",
+            "title": "연결 회계 결산 담당자 채용 (KICPA 우대)",
+            "raw_html": "자격요건: IFRS 연결 결산 가능자. 우대사항: 한국공인회계사(CPA) 자격증 소지자"
+        }
+        res = self.engine.analyze_and_classify(posting)
+        self.assertIn("CPA", res["preferred_certifications"])
+        self.assertIn("IFRS", res["preferred_skills_tags"])
+        self.assertIn("연결회계", res["preferred_skills_tags"])
+
+        # 내부회계(SOX), 공시 검증
+        posting_2 = {
+            "id": "tag_2",
+            "company_name": "크래프톤",
+            "title": "공시 및 내부회계관리제도 수립 담당자",
+            "raw_html": "자격요건: 내부회계(SOX) 통제 설계 경험 및 DART 공시 실무 경력자"
+        }
+        res_2 = self.engine.analyze_and_classify(posting_2)
+        self.assertIn("내부회계", res_2["preferred_skills_tags"])
+        self.assertIn("공시", res_2["preferred_skills_tags"])
 
     def test_delta_closed_logic(self):
         """델타 변동 분석기의 마감 처리 로직 검증 (수집 누락 안전장치 포함)"""
