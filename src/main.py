@@ -94,6 +94,16 @@ def run_scraping_phase():
     except Exception as e:
         print(f"    [ERR] 시프트업 공식 수집 실패: {e}", file=sys.stderr)
 
+    # 8-2. [헬스체크] 소스별 수집 건수 점검 — 항상 공고가 있는 플랫폼이 0건이면 스크래퍼 점검 신호.
+    #   (게임사 자체수집 0건은 단순 '공고 없음'일 수 있어 경고 대상에서 제외)
+    from collections import Counter
+    source_counts = Counter(p["source"] for p in all_postings)
+    print(f"\n[헬스체크] 소스별 수집 건수: {dict(source_counts)}")
+    platform_sources = ["wanted", "saramin", "jobkorea", "gamejob"]
+    zero_platforms = [s for s in platform_sources if source_counts.get(s, 0) == 0]
+    if zero_platforms:
+        print(f"    [WARN] 플랫폼 소스 0건 감지(스크래퍼 점검 필요): {', '.join(zero_platforms)}", file=sys.stderr)
+
     # 9. DB 적재 및 정밀 하이브리드 분류
     print("\n[-] SQLite 데이터베이스 마스터 적재 및 정밀 분류 가동 중...")
     newly_added = 0

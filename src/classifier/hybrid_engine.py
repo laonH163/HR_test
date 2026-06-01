@@ -10,20 +10,28 @@ class HybridClassificationEngine:
         }
 
         # 2. 기업 규모 매타 사전 (매출 규모 억 단위, 사원수 명 단위 / 주요 게임사 데이터 하이브리드 기본값 탑재)
+        # revenue: 연매출(억), size: 임직원수(명). 자체수집 20사 커버.
+        # 더블유게임즈·그라비티 및 신규 7사는 2024 회계연도 DART 공시 기준 갱신(2026-06-01).
+        # (그라비티·NHN size는 별도/본사 기준 — 해외 자회사 포함 연결 전체와 다름)
         self.company_meta_presets = {
-            "더블유게임즈": {"revenue": 3400, "size": 350},
+            "더블유게임즈": {"revenue": 6335, "size": 394},
             "시프트업": {"revenue": 1600, "size": 290},
             "넥슨": {"revenue": 35000, "size": 1500},
             "넥슨코리아": {"revenue": 35000, "size": 1500},
+            "넥슨게임즈": {"revenue": 2561, "size": 1459},
             "크래프톤": {"revenue": 19000, "size": 1600},
             "엔씨소프트": {"revenue": 17000, "size": 4000},
             "넷마블": {"revenue": 25000, "size": 800},
             "카카오게임즈": {"revenue": 10000, "size": 450},
             "네오위즈": {"revenue": 3600, "size": 900},
+            "네오플": {"revenue": 13784, "size": 1402},
             "데브시스터즈": {"revenue": 1600, "size": 360},
             "컴투스": {"revenue": 7000, "size": 1000},
             "펄어비스": {"revenue": 3800, "size": 800},
-            "그라비티": {"revenue": 4600, "size": 500}
+            "그라비티": {"revenue": 5008, "size": 414},
+            "조이시티": {"revenue": 1429, "size": 365},
+            "라인게임즈": {"revenue": 435, "size": 147},
+            "NHN": {"revenue": 24561, "size": 893},
         }
 
     def classify_work_type(self, text):
