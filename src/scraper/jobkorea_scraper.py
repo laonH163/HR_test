@@ -38,6 +38,44 @@ class JobKoreaScraper:
         # 일시적 네트워크 오류 자동 재시도 + 커넥션 재사용
         self.session = make_session(headers=self.headers)
 
+    def is_finance_job(self, title):
+        """제목 기준으로 재무/회계/세무/자금 직군인지 판별 (오탐 극최소화)"""
+        if not title:
+            return False
+        title_lower = title.lower()
+
+        # 비재무/비사무 직무 제외
+        for blocked in self.title_blacklist:
+            if blocked in title_lower:
+                return False
+
+        # 한글 재무/회계/세무/자금 직군 판별 키워드
+        finance_keywords_ko = [
+            "재무", "회계", "세무", "자금", "경리", "결산", "내부회계", "내부통제",
+            "재무기획", "자금운용", "원가", "공시"
+        ]
+        if any(kw in title for kw in finance_keywords_ko):
+            return True
+
+        # 영어 재무/회계/세무/자금 직군 판별 키워드
+        finance_keywords_en = [
+            "finance", "financial", "accounting", "accountant", "tax",
+            "audit", "treasury", "payroll", "fp&a"
+        ]
+        if any(kw in title_lower for kw in finance_keywords_en):
+            return True
+
+        # 감사: 재무·회계 맥락 복합어만 인정('고객감사' 등 오탐 배제)
+        audit_pattern = r"(내부\s?감사|회계\s?감사|상근\s?감사|외부\s?감사|감사\s?담당|감사팀|감사실|감사역|감사\s?업무)"
+        if re.search(audit_pattern, title):
+            return True
+
+        # IR(투자자관계/공시): 약어라 단어 경계로만 매칭해 hiring 등 오탐 방지
+        if re.search(r"\bir\b", title_lower):
+            return True
+
+        return False
+
     def is_game_company(self, company_name, title):
         """회사명 또는 공고 제목에 게임업계 키워드가 포함되는지 필터링"""
         norm_name = company_name.lower()
@@ -116,6 +154,10 @@ class JobKoreaScraper:
                     if company_link and company_link != title_link:
                         company_name = company_link.text.strip()
 
+                    # 1차 사전 필터링: 게임 업계이면서 재무 직무인지 체크 (불필요한 상세페이지 호출 최소화)
+                    if not self.is_game_company(company_name, title) or not self.is_finance_job(title):
+                        continue
+
                     # 상세 페이지 접속하여 정밀 보정 및 본문 수집
                     detail_url = f"https://www.jobkorea.co.kr/Recruit/GI_Read/{jk_id}"
                     time.sleep(random.uniform(0.5, 1.2))
@@ -143,7 +185,10 @@ class JobKoreaScraper:
                     except Exception:
                         desc_text = title
 
-                    # 최종 보정 후 다시 게임사 여부 점검 (안전장치)
+                    # 최종 보정 후 다시 게임사 여부 및 재무 직무 여부 점검 (안전장치)
+                    if not self.is_finance_job(title):
+                        continue
+
                     if not self.is_game_company(company_name, title) and "게임" not in desc_text.lower() and "game" not in desc_text.lower():
                         continue
 

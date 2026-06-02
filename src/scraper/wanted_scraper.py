@@ -1,3 +1,4 @@
+import re
 import random
 import time
 from datetime import datetime
@@ -27,6 +28,44 @@ class WantedScraper:
             "딜러", "dealer", "식음료", "f&b", "객실", "안내", "서빙", "바텐더", "벨맨",
             "캐셔", "카운터", "알바", "아르바이트"
         ]
+
+    def is_finance_job(self, title):
+        """제목 기준으로 재무/회계/세무/자금 직군인지 판별 (오탐 극최소화)"""
+        if not title:
+            return False
+        title_lower = title.lower()
+
+        # 비재무/비사무 직무 제외
+        for blocked in self.title_blacklist:
+            if blocked in title_lower:
+                return False
+
+        # 한글 재무/회계/세무/자금 직군 판별 키워드
+        finance_keywords_ko = [
+            "재무", "회계", "세무", "자금", "경리", "결산", "내부회계", "내부통제",
+            "재무기획", "자금운용", "원가", "공시"
+        ]
+        if any(kw in title for kw in finance_keywords_ko):
+            return True
+
+        # 영어 재무/회계/세무/자금 직군 판별 키워드
+        finance_keywords_en = [
+            "finance", "financial", "accounting", "accountant", "tax",
+            "audit", "treasury", "payroll", "fp&a"
+        ]
+        if any(kw in title_lower for kw in finance_keywords_en):
+            return True
+
+        # 감사: 재무·회계 맥락 복합어만 인정('고객감사' 등 오탐 배제)
+        audit_pattern = r"(내부\s?감사|회계\s?감사|상근\s?감사|외부\s?감사|감사\s?담당|감사팀|감사실|감사역|감사\s?업무)"
+        if re.search(audit_pattern, title):
+            return True
+
+        # IR(투자자관계/공시): 약어라 단어 경계로만 매칭해 hiring 등 오탐 방지
+        if re.search(r"\bir\b", title_lower):
+            return True
+
+        return False
 
     def is_game_company(self, company_name, job_description):
         """회사명 또는 직무 상세 내용에 게임 도메인 키워드가 들어있는지 필터링"""
@@ -152,8 +191,10 @@ class WantedScraper:
                             is_suspicious_default = False
 
                         # 게임 업계 공고인지 사전 필터링 (suspicious 상태면 상세 페이지 검증을 위해 무조건 진행)
-                        if not is_suspicious_default and not self.is_game_company(company, title):
-                            continue
+                        if not is_suspicious_default:
+                            # 게임 회사 및 재무 직무인지 사전 체크 (마케팅 등 걸러내어 상세 페이지 탐색 최소화)
+                            if not self.is_game_company(company, title) or not self.is_finance_job(title):
+                                continue
 
                         # 상세 페이지로 이동해 본문 내용 긁어오기
                         detail_url = f"https://www.wanted.co.kr/wd/{wanted_id}"
@@ -180,6 +221,10 @@ class WantedScraper:
                             company = meta_company_el.text.strip().replace("회사명 더보기", "").strip()
 
                         detail_page.close()
+
+                        # 상세 페이지에서 읽어온 최종 보정된 제목으로 한 번 더 직무 검증 수행 (최종 방어선)
+                        if not self.is_finance_job(title):
+                            continue
 
                         # 정형 데이터 조립
                         posting = {

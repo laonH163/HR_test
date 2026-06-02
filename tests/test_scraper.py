@@ -4,6 +4,7 @@ import sqlite3
 from src.database.db_manager import DBManager
 from src.scraper.wanted_scraper import WantedScraper
 from src.scraper.saramin_scraper import SaraminScraper
+from src.scraper.jobkorea_scraper import JobKoreaScraper
 from src.scraper.company_scrapers import CompanyScrapers
 
 class TestScraperAndDatabase(unittest.TestCase):
@@ -100,7 +101,7 @@ class TestScraperAndDatabase(unittest.TestCase):
         self.assertTrue(is_modified)
 
     def test_wanted_filtering(self):
-        """원티드 스크래퍼의 게임 회사 필터링 로직 검증"""
+        """원티드 스크래퍼의 게임 회사 및 직무 필터링 로직 검증"""
         scraper = WantedScraper()
 
         # 게임 회사 매칭 케이스
@@ -110,6 +111,30 @@ class TestScraperAndDatabase(unittest.TestCase):
 
         # 게임사 도메인이 전혀 없는 케이스 필터링
         self.assertFalse(scraper.is_game_company("대형제조업", "생산 관리 세무 조정 담당자 채용"))
+
+        # 직무 필터링 검증
+        self.assertTrue(scraper.is_finance_job("재무 회계 담당자"))
+        self.assertTrue(scraper.is_finance_job("[Finance Div.] Tax Manager (3년 이상)"))
+        self.assertTrue(scraper.is_finance_job("회계감사 및 내부회계관리제도 구축"))
+        self.assertTrue(scraper.is_finance_job("IR Manager"))
+
+        self.assertFalse(scraper.is_finance_job("Server Programmer (we are hiring now)"))
+        self.assertFalse(scraper.is_finance_job("고객감사 이벤트 기획자"))
+        self.assertFalse(scraper.is_finance_job("마케팅 및 브랜드 홍보 담당자"))
+
+    def test_saramin_and_jobkorea_finance_filtering(self):
+        """사람인 및 잡코리아 스크래퍼의 직무 필터링 로직 검증"""
+        s_scraper = SaraminScraper()
+        jk_scraper = JobKoreaScraper()
+
+        for scraper in [s_scraper, jk_scraper]:
+            self.assertTrue(scraper.is_finance_job("자금 운용 및 세무 조정 담당자"))
+            self.assertTrue(scraper.is_finance_job("Accounting & Finance Leader"))
+            self.assertTrue(scraper.is_finance_job("내부 감사 및 통제 전문가"))
+
+            self.assertFalse(scraper.is_finance_job("UI/UX Designer"))
+            self.assertFalse(scraper.is_finance_job("감사패 및 판촉물 제작 디자이너"))
+            self.assertFalse(scraper.is_finance_job("QA 담당 및 마케팅 매니저"))
 
 if __name__ == '__main__':
     unittest.main()
