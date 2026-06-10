@@ -21,6 +21,8 @@ class TestATSAdapterFilters(unittest.TestCase):
             "[NC][단기계약직] Payroll 업무 보조 및 운영",
             "[Finance Div.] IR Manager (7년 이상)",
             "연결회계팀원(회계사)",
+            "하이브IM 세무조정 담당자 채용",
+            "빅게임스튜디오 원가회계 담당자 영입"
         ]
         for title in positives:
             self.assertTrue(self.adapter.is_finance_job(title), f"통과해야 함: {title}")
@@ -36,6 +38,9 @@ class TestATSAdapterFilters(unittest.TestCase):
             "Senior Animator",
             "고객감사 이벤트 운영 담당",  # '감사' 부분매칭 오탐 방지
             "감사패 제작 디자이너",
+            "[Finance Div.][Legal Dept.] Legal Counsel",
+            "[Finance Div.] 공정거래 공시 Compliance Specialist",
+            "인사(보상)/전산자산 각 부문별 모집"
         ]
         for title in negatives:
             self.assertFalse(self.adapter.is_finance_job(title), f"걸러져야 함: {title}")

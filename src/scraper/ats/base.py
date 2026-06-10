@@ -18,19 +18,24 @@ from src.utils.http import make_session
 # 한국어 인사말('감사합니다')이 대량 오탐을 유발하기 때문(라이브에서 53/53건 전부 오탐 확인).
 FINANCE_KEYWORDS_KO = [
     "재무", "회계", "세무", "자금", "경리", "결산", "내부회계", "내부통제",
-    "재무기획", "자금운용", "원가", "공시",
+    "재무기획", "자금운용", "원가", "회계사", "세무사"
 ]
 # '감사'는 '고객감사 이벤트'·'감사패' 등 비재무 오탐이 많아 단독 키워드에서 제외하고,
 # 재무·회계 맥락 복합어로만 인정한다(아래 is_finance_job의 정규식).
 _AUDIT_PATTERN = r"(내부\s?감사|회계\s?감사|상근\s?감사|외부\s?감사|감사\s?담당|감사팀|감사실|감사역|감사\s?업무)"
 FINANCE_KEYWORDS_EN = [
     "finance", "financial", "accounting", "accountant", "tax",
-    "audit", "treasury", "payroll", "fp&a",
+    "treasury", "payroll", "fp&a",
 ]
 
 # 비재무/비사무 직무 제외 (혹시 모를 오탐 방지 — 게임사 자체페이지엔 드물지만 일관성 위해 유지)
+# 비재무/비사무 직무 제외 (혹시 모를 오탐 방지 — 게임사 자체페이지엔 드물지만 일관성 위해 유지)
+# '채용' 키워드는 '재무 담당자 채용'처럼 제목 끝에 유효하게 쓰이므로 블랙리스트에서 제외하여
+# '하이브IM 세무조정 담당자 채용' 같은 공고가 안전하게 통과할 수 있도록 합니다.
 TITLE_BLACKLIST = [
-    "딜러", "dealer", "식음료", "f&b", "객실", "서빙", "바텐더", "캐셔", "아르바이트",
+    "딜러", "dealer", "식음료", "f&b", "객실", "서빙", "바텐더", "벨맨", "캐셔", "카운터", "알바", "아르바이트",
+    "legal", "counsel", "compliance", "인사", "recru", "변호사", "준법", "공정거래",
+    "보상", "급여", "pmo", "비서", "총무"
 ]
 
 DEFAULT_HEADERS = {
@@ -73,7 +78,12 @@ class BaseATSAdapter:
         if re.search(_AUDIT_PATTERN, title):
             return True
         # IR(투자자관계/공시): 약어라 단어 경계로만 매칭해 hiring 등 오탐 방지
-        return bool(re.search(r"\bir\b", title_lower))
+        if re.search(r"\bir\b", title_lower):
+            return True
+        # 재무공시/회계공시 등 구체적인 재무 맥락 공시만 매칭 (단독 '공시' 제거 대응)
+        if re.search(r"(재무\s?공시|회계\s?공시|기업\s?공시)", title):
+            return True
+        return False
 
     def build_posting(self, job_id, title, origin_url, raw_html, posted_at=None, location=None):
         """기존 파이프라인(db_manager.upsert_job_posting)이 기대하는 표준 dict 생성."""

@@ -17,7 +17,8 @@ class SaraminScraper:
             "더블유게임즈", "레드브릭", "엔씨", "com2us", "wemade", "gravity", "kakaogames",
             "pearlabyss", "webzen", "shiftup", "linegames", "joycity", "액션스퀘어",
             "위메이드맥스", "위메이드플레이", "컴투스홀딩스", "컴투스플랫폼", "NHN", "nhn",
-            "엔에이치엔", "네오플", "아이덴티티", "그라비티네오싸이언", "웹젠레드코어", "웹젠블루포트"
+            "엔에이치엔", "네오플", "아이덴티티", "그라비티네오싸이언", "웹젠레드코어", "웹젠블루포트",
+            "하이브im", "hybeim", "빅게임스튜디오", "vicgamestudios", "vic game"
         ]
         self.headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -33,7 +34,8 @@ class SaraminScraper:
         # 원치 않는 비사무/비재무 상세 직무 키워드 블랙리스트
         self.title_blacklist = [
             "딜러", "dealer", "식음료", "f&b", "객실", "안내", "서빙", "바텐더", "벨맨",
-            "캐셔", "카운터", "알바", "아르바이트"
+            "캐셔", "카운터", "알바", "아르바이트", "legal", "counsel", "compliance", "인사",
+            "recru", "채용", "변호사", "준법", "공정거래", "보상", "급여", "pmo", "비서", "총무"
         ]
         # 일시적 네트워크 오류 자동 재시도 + 커넥션 재사용
         self.session = make_session(headers=self.headers)
@@ -52,7 +54,7 @@ class SaraminScraper:
         # 한글 재무/회계/세무/자금 직군 판별 키워드
         finance_keywords_ko = [
             "재무", "회계", "세무", "자금", "경리", "결산", "내부회계", "내부통제",
-            "재무기획", "자금운용", "원가", "공시"
+            "재무기획", "자금운용", "원가", "회계사", "세무사"
         ]
         if any(kw in title for kw in finance_keywords_ko):
             return True
@@ -60,7 +62,7 @@ class SaraminScraper:
         # 영어 재무/회계/세무/자금 직군 판별 키워드
         finance_keywords_en = [
             "finance", "financial", "accounting", "accountant", "tax",
-            "audit", "treasury", "payroll", "fp&a"
+            "treasury", "payroll", "fp&a"
         ]
         if any(kw in title_lower for kw in finance_keywords_en):
             return True
@@ -72,6 +74,10 @@ class SaraminScraper:
 
         # IR(투자자관계/공시): 약어라 단어 경계로만 매칭해 hiring 등 오탐 방지
         if re.search(r"\bir\b", title_lower):
+            return True
+
+        # 재무공시/회계공시 등 구체적인 재무 맥락 공시만 매칭 (단독 '공시' 제거 대응)
+        if re.search(r"(재무\s?공시|회계\s?공시|기업\s?공시)", title):
             return True
 
         return False

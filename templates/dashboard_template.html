@@ -13,9 +13,61 @@
     <style>
         body {
             font-family: 'Noto Sans KR', sans-serif;
+            transition: background-color 0.3s ease, color 0.3s ease;
         }
         .mono {
             font-family: 'JetBrains Mono', monospace;
+        }
+        /* 시스템 다크모드 대응 커스텀 클래스 */
+        @media (prefers-color-scheme: dark) {
+            body {
+                background-color: #0f172a !important; /* slate-900 */
+                color: #f1f5f9 !important; /* slate-100 */
+            }
+            .bg-white {
+                background-color: #1e293b !important; /* slate-800 */
+                color: #f1f5f9 !important;
+            }
+            .text-gray-900 {
+                color: #f1f5f9 !important;
+            }
+            .text-slate-800 {
+                color: #e2e8f0 !important;
+            }
+            .text-gray-500, .text-gray-400 {
+                color: #94a3b8 !important; /* slate-400 */
+            }
+            .border-gray-100, .border-gray-200, .divide-gray-100 {
+                border-color: #334155 !important; /* slate-700 */
+            }
+            tr:hover {
+                background-color: #334155 / 30 !important;
+            }
+            input, select, textarea {
+                background-color: #1e293b !important;
+                color: #f1f5f9 !important;
+                border-color: #475569 !important; /* slate-600 */
+            }
+            .bg-slate-50 {
+                background-color: #1e293b !important;
+            }
+            .bg-slate-50\/70 {
+                background-color: rgba(30, 41, 59, 0.7) !important;
+            }
+            .text-slate-700 {
+                color: #cbd5e1 !important; /* slate-300 */
+            }
+            .bg-gray-100 {
+                background-color: #334155 !important;
+                color: #f1f5f9 !important;
+            }
+            .hover\:bg-slate-50:hover {
+                background-color: #334155 !important;
+            }
+            /* 다크모드 전용 폼 조절 */
+            input::placeholder, textarea::placeholder {
+                color: #64748b !important;
+            }
         }
     </style>
 </head>

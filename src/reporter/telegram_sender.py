@@ -22,12 +22,69 @@ class TelegramSender:
         return bool(self.bot_token and self.chat_id)
 
     def send_formatted_message(self, text):
-        """텔레그램 메시지 원시 전송 (MarkdownV2 지원)"""
+        """텔레그램 메시지 원시 전송 (MarkdownV2 지원) 및 글자 수 제한 방지 Chunking 지원"""
         if not self.is_enabled():
             print("    [WARN] Telegram Credentials not found. Skipping alert.", file=sys.stderr)
             return False
 
-        # HTML 스타일 마크다운 호환 전송 지원
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # 글자 수 초과 방어 및 연속 Chunking 전송 처리 (4,096자 제한 철저 대응)
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        max_length = 3500
+        if len(text) <= max_length:
+            return self._send_raw_payload(text)
+
+        print(f"    [INFO] 메시지 글자 수({len(text)}자)가 제한을 초과하여 분할(Chunking) 전송을 시작합니다.")
+        lines = text.split("\n")
+        chunks = []
+        current_chunk = []
+        current_length = 0
+
+        # 열린 HTML 태그들의 균형을 지키며 청킹하는 인라인 헬퍼
+        # 텔레그램 파서가 깨지지 않도록 단순 볼드(<b>) 등의 최소 마크업 마감 처리 보조
+        bold_open = False
+
+        for line in lines:
+            # 줄 바꿈 포함 길이 계산
+            line_len = len(line) + 1
+            if current_length + line_len > max_length and current_chunk:
+                # 닫히지 않은 볼드 태그 보정
+                chunk_text = "\n".join(current_chunk)
+                if bold_open:
+                    chunk_text += "</b>"
+                chunks.append(chunk_text)
+
+                # 다음 청크 준비
+                current_chunk = []
+                if bold_open:
+                    current_chunk.append("<b>(이어서)</b>")
+                    current_length = len("<b>(이어서)</b>\n")
+                else:
+                    current_length = 0
+
+            current_chunk.append(line)
+            current_length += line_len
+
+            # 볼드 태그 열림/닫힘 카운팅 (간단한 HTML 정밀 대응)
+            bold_open += line.count("<b>") - line.count("</b>")
+
+        if current_chunk:
+            chunks.append("\n".join(current_chunk))
+
+        # 모든 청크 순차 전송
+        success_all = True
+        for idx, chunk in enumerate(chunks, 1):
+            print(f"    -> 분할 메시지 전송 중 ({idx}/{len(chunks)} 청크)...")
+            res = self._send_raw_payload(chunk)
+            if not res:
+                success_all = False
+            import time
+            time.sleep(0.5) # 연속 요청 시 텔레그램 스로틀링 방지용 최소 쿨타임
+
+        return success_all
+
+    def _send_raw_payload(self, text):
+        """실제 텔레그램 HTTP POST 전송을 담당하는 서브 메서드"""
         payload = {
             "chat_id": self.chat_id,
             "text": text,
@@ -38,7 +95,7 @@ class TelegramSender:
         try:
             response = requests.post(self.api_url, json=payload, timeout=15)
             if response.status_code == 200:
-                print("    -> 텔레그램 프라이빗 브리핑 전송 완료!")
+                print("    -> 텔레그램 프라이빗 브리핑 세그먼트 전송 완료!")
                 return True
             else:
                 print(f"    [ERR] 텔레그램 API 전송 실패: {response.status_code} | {response.text}", file=sys.stderr)
@@ -112,6 +169,11 @@ class TelegramSender:
         # 전체 활성 공고 중복 제거 가동
         deduped_active = deduplicate_postings(active_postings)
 
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # 컴팩트(Compact) 가변형 템플릿 스위칭 기법 구현 (공고 대량 등록 대응)
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        is_compact_mode = len(deduped_active) > 15  # 현재 활성 공고가 15개를 넘으면 Compact 뷰로 대전환해 가독성 극대화
+
         msg_lines = [
             f"<b>📢 [게임사 재무공고 브리핑]</b>",
             f"일자: {run_date}",
@@ -160,19 +222,23 @@ class TelegramSender:
         existing_active_jobs = [j for j in deduped_active if j["id"] not in new_job_ids]
 
         if existing_active_jobs:
-            msg_lines.append("<b>💼 기존에 수집된 현재 채용 진행 중인 공고 목록:</b>")
-            for job in existing_active_jobs:
-                title_clean = job["title"].replace("<", "&lt;").replace(">", "&gt;")
-                company_clean = job["company_name"].replace("<", "&lt;").replace(">", "&gt;")
-                msg_lines.append(f"• <b>[{company_clean}]</b> {title_clean}")
+            if is_compact_mode:
+                msg_lines.append(f"<b>💼 기존 수집 채용 중인 공고: {len(existing_active_jobs)}건 활성화 중</b>")
+                msg_lines.append("<i>※ 활성 공고가 많아 텍스트를 간결하게 축약합니다. 전체 목록은 대시보드에서 보실 수 있습니다.</i>\n")
+            else:
+                msg_lines.append("<b>💼 기존에 수집된 현재 채용 진행 중인 공고 목록:</b>")
+                for job in existing_active_jobs:
+                    title_clean = job["title"].replace("<", "&lt;").replace(">", "&gt;")
+                    company_clean = job["company_name"].replace("<", "&lt;").replace(">", "&gt;")
+                    msg_lines.append(f"• <b>[{company_clean}]</b> {title_clean}")
 
-                # 멀티 소스 배지/링크 표출 처리 (Milestone 5)
-                links_str = []
-                for s in job["sources"]:
-                    src_upper = s["source"].upper()
-                    links_str.append(f"<a href='{s['url']}'>{src_upper}</a>")
-                msg_lines.append(f"  👉 바로가기: { ' | '.join(links_str) }")
-            msg_lines.append("")
+                    # 멀티 소스 배지/링크 표출 처리 (Milestone 5)
+                    links_str = []
+                    for s in job["sources"]:
+                        src_upper = s["source"].upper()
+                        links_str.append(f"<a href='{s['url']}'>{src_upper}</a>")
+                    msg_lines.append(f"  👉 바로가기: { ' | '.join(links_str) }")
+                msg_lines.append("")
 
         msg_lines.append("━━━━━━━━━━━━━━━━━━━━")
         msg_lines.append("💻 상세 필터 및 전체 누적 공고 조회가 필요하신 경우, 아래 실시간 대시보드 링크를 터치해 주세요.")

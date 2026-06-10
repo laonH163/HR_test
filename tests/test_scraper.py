@@ -108,6 +108,8 @@ class TestScraperAndDatabase(unittest.TestCase):
         self.assertTrue(scraper.is_game_company("넥슨코리아", "재무팀 자금 담당자 채용"))
         self.assertTrue(scraper.is_game_company("데브시스터즈", "회계 공고"))
         self.assertTrue(scraper.is_game_company("일반서비스", "게임 개발 스튜디오에서 회계를 구합니다"))
+        self.assertTrue(scraper.is_game_company("하이브IM", "자금 업무"))
+        self.assertTrue(scraper.is_game_company("빅게임스튜디오", "ERP 회계"))
 
         # 게임사 도메인이 전혀 없는 케이스 필터링
         self.assertFalse(scraper.is_game_company("대형제조업", "생산 관리 세무 조정 담당자 채용"))
@@ -117,10 +119,14 @@ class TestScraperAndDatabase(unittest.TestCase):
         self.assertTrue(scraper.is_finance_job("[Finance Div.] Tax Manager (3년 이상)"))
         self.assertTrue(scraper.is_finance_job("회계감사 및 내부회계관리제도 구축"))
         self.assertTrue(scraper.is_finance_job("IR Manager"))
+        self.assertTrue(scraper.is_finance_job("[Finance Div.] 기업공시 담당자"))
 
         self.assertFalse(scraper.is_finance_job("Server Programmer (we are hiring now)"))
         self.assertFalse(scraper.is_finance_job("고객감사 이벤트 기획자"))
         self.assertFalse(scraper.is_finance_job("마케팅 및 브랜드 홍보 담당자"))
+        self.assertFalse(scraper.is_finance_job("[Finance Div.][Legal Dept.] Legal Counsel"))
+        self.assertFalse(scraper.is_finance_job("[Finance Div.] 공정거래 공시 Compliance Specialist"))
+        self.assertFalse(scraper.is_finance_job("인사(보상)/전산자산 각 부문별 모집"))
 
     def test_saramin_and_jobkorea_finance_filtering(self):
         """사람인 및 잡코리아 스크래퍼의 직무 필터링 로직 검증"""
@@ -135,6 +141,8 @@ class TestScraperAndDatabase(unittest.TestCase):
             self.assertFalse(scraper.is_finance_job("UI/UX Designer"))
             self.assertFalse(scraper.is_finance_job("감사패 및 판촉물 제작 디자이너"))
             self.assertFalse(scraper.is_finance_job("QA 담당 및 마케팅 매니저"))
+            self.assertFalse(scraper.is_finance_job("결제 서비스 기술 지원 담당"))
+            self.assertFalse(scraper.is_finance_job("수시채용 공고"))
 
 if __name__ == '__main__':
     unittest.main()

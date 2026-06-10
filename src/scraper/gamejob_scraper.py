@@ -17,7 +17,7 @@ class GameJobScraper:
         }
         # 핵심 재무/회계/세무/자금 직무 키워드 정의 (무관한 게임 개발, PM, 디자인 직군 필터링용)
         self.finance_keywords = [
-            "회계", "세무", "재무", "자금", "경리", "결산", "ERP", "감사", "세정",
+            "회계", "세무", "재무", "자금", "경리", "결산", "ERP", "세정",
             "자금운용", "내부통제", "accounting", "finance", "tax", "auditing"
         ]
         # 비개발/비제조 순수 카지노, 리조트, 오락실, 보드게임카페 등 게임 개발 및 IT도메인이 아닌 기업 블랙리스트
@@ -28,17 +28,40 @@ class GameJobScraper:
         # 원치 않는 비사무/비재무 상세 직무 키워드 블랙리스트
         self.title_blacklist = [
             "딜러", "dealer", "식음료", "f&b", "객실", "안내", "서빙", "바텐더", "벨맨",
-            "캐셔", "카운터", "알바", "아르바이트"
+            "캐셔", "카운터", "알바", "아르바이트", "legal", "counsel", "compliance", "인사",
+            "recru", "채용", "변호사", "준법", "공정거래", "보상", "급여", "pmo", "비서", "총무"
         ]
         # 일시적 네트워크 오류 자동 재시도 + 커넥션 재사용
         self.session = make_session(headers=self.headers)
 
     def is_finance_job(self, title):
         """직무 타이틀이 핵심 재무/회계/세무/자금 카테고리에 속하는지 검증"""
+        if not title:
+            return False
         norm_title = title.lower()
+
+        # 비재무/비사무 직무 제외
+        for blocked in self.title_blacklist:
+            if blocked in norm_title:
+                return False
+
         for kw in self.finance_keywords:
             if kw in norm_title:
                 return True
+
+        # 감사: 재무·회계 맥락 복합어만 인정('고객감사' 등 오탐 배제)
+        audit_pattern = r"(내부\s?감사|회계\s?감사|상근\s?감사|외부\s?감사|감사\s?담당|감사팀|감사실|감사역|감사\s?업무)"
+        if re.search(audit_pattern, title):
+            return True
+
+        # IR(투자자관계/공시): 약어라 단어 경계로만 매칭
+        if re.search(r"\bir\b", norm_title):
+            return True
+
+        # 재무공시/회계공시 등 구체적인 재무 맥락 공시만 매칭
+        if re.search(r"(재무\s?공시|회계\s?공시|기업\s?공시)", title):
+            return True
+
         return False
 
     def is_valid_company_and_job(self, company_name, title):

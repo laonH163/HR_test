@@ -122,6 +122,21 @@ class TestClassifierAndDelta(unittest.TestCase):
         self.assertIn("내부회계", res_2["preferred_skills_tags"])
         self.assertIn("공시", res_2["preferred_skills_tags"])
 
+    def test_company_meta_intel_fallback(self):
+        """계열사 역매칭 지능형 규칙 검증"""
+        # 1) 정확 매칭 프리셋
+        res_shiftup = self.engine._lookup_company_meta("시프트업")
+        self.assertEqual(res_shiftup["revenue"], 1600)
+
+        # 2) 계열사 역매칭 폴백 매칭
+        res_wemadeplay = self.engine._lookup_company_meta("위메이드플레이")
+        res_wemade = self.engine.company_meta_presets["위메이드"]
+        self.assertEqual(res_wemadeplay["revenue"], res_wemade["revenue"])
+
+        res_hybeim = self.engine._lookup_company_meta("하이브IM")
+        res_nhn = self.engine.company_meta_presets["NHN"]
+        self.assertEqual(res_hybeim["revenue"], res_nhn["revenue"])
+
     def test_delta_closed_logic(self):
         """델타 변동 분석기의 마감 처리 로직 검증 (수집 누락 안전장치 포함)"""
         def make_posting(pid, company, title, html):

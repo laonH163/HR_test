@@ -32,6 +32,8 @@ class HybridClassificationEngine:
             "조이시티": {"revenue": 1429, "size": 365},
             "라인게임즈": {"revenue": 435, "size": 147},
             "NHN": {"revenue": 24561, "size": 893},
+            "위메이드": {"revenue": 6089, "size": 500},
+            "스마일게이트": {"revenue": 13700, "size": 1200},
         }
 
     def classify_work_type(self, text):
@@ -167,7 +169,10 @@ class HybridClassificationEngine:
         return norm.strip().replace(" ", "")
 
     def _lookup_company_meta(self, company):
-        """회사명으로 매출/규모 프리셋을 조회. 정확 매칭 → 정규화 매칭 → 부분 포함 매칭 순."""
+        """회사명으로 매출/규모 프리셋을 조회. 정확 매칭 → 정규화 매칭 → 부분 포함 매칭 순.
+
+        계열사 및 자회사의 지주사 역추적 폴백 규칙을 내장하여 매칭률을 보완합니다 (Milestone 5).
+        """
         default = {"revenue": None, "size": None}
         if not company:
             return default
@@ -184,6 +189,24 @@ class HybridClassificationEngine:
             nk = self._normalize_company_name(key)
             if nk and (nk in norm or norm in nk):
                 return meta
+
+        # 4) 지능형 계열사 역매칭 폴백 규칙 (프리셋에 없는 신생/계열 법인 매칭)
+        fallback_rules = {
+            "컴투스": "컴투스",
+            "com2us": "컴투스",
+            "위메이드": "위메이드",
+            "wemade": "위메이드",
+            "넥슨": "넥슨",
+            "nexon": "넥슨",
+            "스마일게이트": "스마일게이트",
+            "smilegate": "스마일게이트",
+            "하이브": "NHN",  # 하이브IM 등 IT 게임 퍼블리셔 규모의 유추 매칭
+            "hybe": "NHN"
+        }
+        for kw, target in fallback_rules.items():
+            if kw in norm.lower():
+                return self.company_meta_presets.get(target, default)
+
         return default
 
     def analyze_and_classify(self, job_posting):
