@@ -180,5 +180,51 @@ class TestClassifierAndDelta(unittest.TestCase):
         self.assertEqual(cursor.fetchone()["status"], "CLOSED")
         conn.close()
 
+    def test_delta_analyzer_successful_sources_protection(self):
+        """특정 소스의 스크래핑이 실패했을 때 해당 소스 공고의 자동 마감 오판 방어 기능 테스트"""
+        def make_posting(job_id, company, title, html, source="wanted"):
+            return {
+                "id": job_id,
+                "source": source,
+                "company_name": company,
+                "title": title,
+                "origin_url": "https://example.com",
+                "location": "서울",
+                "posted_at": "2026-05-21",
+                "status": "ACTIVE",
+                "raw_html": html,
+                "first_seen_at": "2026-05-21 12:00:00",
+                "last_updated_at": "2026-05-21 12:00:00"
+            }
+
+        # 디비 초기 적재
+        postings = [
+            make_posting("wanted_1", "크래프톤", "회계사", "본문", source="krafton"),
+            make_posting("wanted_2", "넥슨", "자금", "본문", source="nexon"),
+            make_posting("wanted_3", "시프트업", "세무", "본문", source="shiftup"),
+        ]
+        for p in postings:
+            self.db_manager.upsert_job_posting(p)
+
+        # 1) 오늘 수집된 건: wanted_1 (krafton 소스)뿐임. (총 수집ID 3건 이상 요건을 위해 더미 포함)
+        # 넥슨(nexon)과 시프트업(shiftup) 수집은 오늘 완전히 실패했다고 가정 (successful_sources에 포함되지 않음)
+        today_ids = {"wanted_1", "dummy_1", "dummy_2"}
+        successful_sources = {"krafton"} # krafton만 성공적으로 수집됨
+
+        # 2) Delta Analyzer 작동 실행
+        closed_count, closed_details = self.analyzer.analyze_closed_postings(today_ids, successful_sources)
+
+        # 3) 성공 소스인 krafton에 속한 미수집 공고는 없으므로 closed_count는 0이어야 함
+        # nexon 및 shiftup 소스는 오늘 수집 실패(successful_sources에 없음)이므로, 오늘 수집되지 않았어도 CLOSED로 마감되지 않고 ACTIVE로 보존되어야 함.
+        self.assertEqual(closed_count, 0)
+
+        # 실제 디비 상태 재검수
+        conn = self.db_manager.get_connection()
+        cursor = conn.cursor()
+        for job_id in ["wanted_1", "wanted_2", "wanted_3"]:
+            cursor.execute("SELECT status FROM job_postings WHERE id = ?", (job_id,))
+            self.assertEqual(cursor.fetchone()["status"], "ACTIVE")
+        conn.close()
+
 if __name__ == '__main__':
     unittest.main()

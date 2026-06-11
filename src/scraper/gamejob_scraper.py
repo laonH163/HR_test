@@ -85,6 +85,9 @@ class GameJobScraper:
         """EUC-KR 검색어 전송 및 UTF-8 응답 파싱, 그리고 직무 타이틀 필터가 반영된 게임잡 수집기"""
         results = []
         keywords = ["회계", "세무", "재무", "자금"]
+        self.is_last_run_success = False
+        success_connections = 0
+        failed_errors = []
 
         for keyword in keywords:
             time.sleep(random.uniform(1.0, 2.5))
@@ -98,10 +101,13 @@ class GameJobScraper:
 
             try:
                 res = self.session.get(search_url, headers=self.headers, timeout=15)
-                html_text = res.content.decode("utf-8", errors="replace")
-
-                if res.status_code != 200:
+                if res.status_code == 200:
+                    success_connections += 1
+                else:
+                    failed_errors.append(f"HTTP {res.status_code}")
                     continue
+
+                html_text = res.content.decode("utf-8", errors="replace")
 
                 soup = BeautifulSoup(html_text, "html.parser")
 
@@ -136,66 +142,72 @@ class GameJobScraper:
                         detail_res = self.session.get(detail_url, headers=self.headers, timeout=10)
                         detail_html = detail_res.content.decode("utf-8", errors="replace")
 
-                        if detail_res.status_code != 200:
-                            continue
+                        if detail_res.status_code == 200:
+                            detail_soup = BeautifulSoup(detail_html, "html.parser")
 
-                        detail_soup = BeautifulSoup(detail_html, "html.parser")
+                            # 타이틀 파싱 '[회사명] 공고제목' 형식 분석
+                            page_title = detail_soup.title.text.strip() if detail_soup.title else ""
+                            company_name = "게임회사"
+                            title = "재무 회계 담당자"
 
-                        # 타이틀 파싱 '[회사명] 공고제목' 형식 분석
-                        page_title = detail_soup.title.text.strip() if detail_soup.title else ""
-                        company_name = "게임회사"
-                        title = "재무 회계 담당자"
+                            match = re.search(r"\[(.*?)\]\s*(.*)", page_title)
+                            if match:
+                                company_name = match.group(1).strip()
+                                title = match.group(2).strip()
+                                if title.endswith("- 게임잡"):
+                                    title = title[:-8].strip()
+                            else:
+                                h1_el = detail_soup.select_one("h1") or detail_soup.select_one(".tit")
+                                if h1_el:
+                                    title = h1_el.text.strip()
+                                co_el = detail_soup.select_one(".co-name") or detail_soup.select_one(".company-name")
+                                if co_el:
+                                    company_name = co_el.text.strip()
 
-                        match = re.search(r"\[(.*?)\]\s*(.*)", page_title)
-                        if match:
-                            company_name = match.group(1).strip()
-                            title = match.group(2).strip()
-                            if title.endswith("- 게임잡"):
-                                title = title[:-8].strip()
+                            # 직무 필터링: 반드시 재무/회계/세무 직군이어야만 승인
+                            if not self.is_finance_job(title):
+                                continue
+
+                            # 기업 및 직무 블랙리스트 엄격 필터링 (람정, 카지노, 딜러 등)
+                            if not self.is_valid_company_and_job(company_name, title):
+                                continue
+
+                            # 공고 본문 내용
+                            desc_container = detail_soup.select_one(".tbList") or detail_soup.select_one(".viewCol") or detail_soup.select_one("body")
+                            full_desc = desc_container.get_text(separator="\n").strip() if desc_container else title
+
+                            location = "서울/경기"
+
+                            posting = {
+                                "id": job_id,
+                                "source": "gamejob",
+                                "company_name": company_name,
+                                "title": title,
+                                "origin_url": detail_url,
+                                "location": location,
+                                "posted_at": datetime.today().strftime("%Y-%m-%d"),
+                                "status": "ACTIVE",
+                                "raw_html": full_desc,
+                                "first_seen_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                "last_updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                            }
+                            results.append(posting)
+                            count += 1
+
                         else:
-                            h1_el = detail_soup.select_one("h1") or detail_soup.select_one(".tit")
-                            if h1_el:
-                                title = h1_el.text.strip()
-                            co_el = detail_soup.select_one(".co-name") or detail_soup.select_one(".company-name")
-                            if co_el:
-                                company_name = co_el.text.strip()
-
-                        # 직무 필터링: 반드시 재무/회계/세무 직군이어야만 승인
-                        if not self.is_finance_job(title):
                             continue
-
-                        # 기업 및 직무 블랙리스트 엄격 필터링 (람정, 카지노, 딜러 등)
-                        if not self.is_valid_company_and_job(company_name, title):
-                            continue
-
-                        # 공고 본문 내용
-                        desc_container = detail_soup.select_one(".tbList") or detail_soup.select_one(".viewCol") or detail_soup.select_one("body")
-                        full_desc = desc_container.get_text(separator="\n").strip() if desc_container else title
-
-                        location = "서울/경기"
-
-                        posting = {
-                            "id": job_id,
-                            "source": "gamejob",
-                            "company_name": company_name,
-                            "title": title,
-                            "origin_url": detail_url,
-                            "location": location,
-                            "posted_at": datetime.today().strftime("%Y-%m-%d"),
-                            "status": "ACTIVE",
-                            "raw_html": full_desc,
-                            "first_seen_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                            "last_updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                        }
-                        results.append(posting)
-                        count += 1
 
                     except Exception:
                         continue
 
-            except Exception:
+            except Exception as e:
+                failed_errors.append(str(e))
                 continue
 
+        if success_connections == 0 and failed_errors:
+            raise RuntimeError(f"게임잡 수집 연결 완전히 실패 (IP 차단/WAF): {', '.join(set(failed_errors))}")
+
+        self.is_last_run_success = True
         unique_postings = {}
         for item in results:
             unique_postings[item["id"]] = item

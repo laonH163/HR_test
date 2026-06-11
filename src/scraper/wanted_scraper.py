@@ -108,6 +108,9 @@ class WantedScraper:
         """스텔스 우회 기능이 적용된 원티드 공고 수집"""
         results = []
         keywords = ["회계", "세무", "재무", "자금"]
+        self.is_last_run_success = False
+        success_connections = 0
+        failed_errors = []
 
         with sync_playwright() as p:
             # navigator.webdriver 탐지 우회를 위한 크롬 인자 주입
@@ -144,6 +147,12 @@ class WantedScraper:
                     page.goto(search_url, timeout=30000)
                     page.wait_for_timeout(3000)
 
+                    # CloudFront 차단 여부 체크 (제목에 block 등 탐지 문구 여부)
+                    title_text = page.title()
+                    if "satisfied" in title_text.lower() or "blocked" in title_text.lower():
+                        failed_errors.append("CloudFront WAF Blocked")
+                        continue
+
                     # 3회 마우스 스크롤 다운을 통해 목록을 넉넉히 바인딩
                     for _ in range(3):
                         page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
@@ -154,6 +163,7 @@ class WantedScraper:
 
                     # a 태그 중 /wd/ 상세 링크 파싱
                     wd_links_elements = [a for a in soup.select("a") if a.get("href") and "/wd/" in a.get("href")]
+                    success_connections += 1
 
                     count = 0
                     for a_tag in wd_links_elements:
@@ -255,10 +265,15 @@ class WantedScraper:
                         count += 1
 
                 except Exception as e:
+                    failed_errors.append(str(e))
                     continue
 
             browser.close()
 
+        if success_connections == 0 and failed_errors:
+            raise RuntimeError(f"원티드 수집 연결 완전히 실패 (IP 차단/WAF): {', '.join(set(failed_errors))}")
+
+        self.is_last_run_success = True
         unique_postings = {}
         for item in results:
             unique_postings[item["id"]] = item

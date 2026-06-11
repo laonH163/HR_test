@@ -56,6 +56,7 @@ class BaseATSAdapter:
         self.source = source
         self.company_name = company_name
         self.session = session or make_session(headers=DEFAULT_HEADERS)
+        self.is_last_run_success = False
 
     def is_finance_job(self, title, body=""):
         """제목 기준으로 재무/회계/세무/자금 직군인지 판별.
@@ -109,7 +110,10 @@ class BaseATSAdapter:
     def safe_fetch(self):
         """예외를 삼키고 stderr에 로깅 — 한 회사 실패가 전체 파이프라인을 멈추지 않게."""
         try:
-            return self.fetch()
+            jobs = self.fetch()
+            self.is_last_run_success = True
+            return jobs
         except Exception as e:
+            self.is_last_run_success = False
             print(f"    [ERR] {self.company_name}({self.source}) 수집 실패: {e}", file=sys.stderr)
             return []

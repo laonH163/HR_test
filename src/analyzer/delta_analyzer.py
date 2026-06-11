@@ -5,10 +5,11 @@ class DeltaAnalyzer:
     def __init__(self, db_manager):
         self.db_manager = db_manager
 
-    def analyze_closed_postings(self, today_scraped_ids):
+    def analyze_closed_postings(self, today_scraped_ids, successful_sources=None):
         """
         오늘 수집된 고유 ID셋(today_scraped_ids)에 속하지 않으면서,
         현재 DB 내에 'ACTIVE' 상태인 채용공고들을 찾아 'CLOSED'로 자동 마킹 처리.
+        단, 수집 성공한 출처(successful_sources) 목록에 포함된 소스의 공고만 마감 처리(차단/실패 방어).
         """
         # [안전 장치] 만약 오늘 전체 수집된 건수가 비정상적으로 적은 경우(예: 3건 미만),
         # 크롤러가 네트워크 지연이나 WAF 차단으로 수집을 정상적으로 완수하지 못한 오류 상황으로 간주하고,
@@ -21,7 +22,7 @@ class DeltaAnalyzer:
         cursor = conn.cursor()
 
         # 1. 현재 DB에 저장된 활성 공고 조회
-        cursor.execute("SELECT id, company_name, title FROM job_postings WHERE status = 'ACTIVE'")
+        cursor.execute("SELECT id, source, company_name, title FROM job_postings WHERE status = 'ACTIVE'")
         active_jobs = cursor.fetchall()
 
         closed_count = 0
@@ -30,6 +31,12 @@ class DeltaAnalyzer:
         # 2. 오늘 수집 대상에서 누락된 건 식별
         for job in active_jobs:
             job_id = job["id"]
+            source = job["source"]
+
+            # 성공적으로 완료된 수집 소스 리스트가 지정되어 있고, 이 공고의 소스가 거기에 없으면 마감 처리를 건너뜀 (안전 방어선)
+            if successful_sources is not None and source not in successful_sources:
+                continue
+
             if job_id not in today_scraped_ids:
                 # 상태를 'CLOSED'로 변경하고 업데이트 시각 기재
                 cursor.execute("""

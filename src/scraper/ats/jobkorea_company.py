@@ -34,8 +34,7 @@ class JobKoreaCompanyAdapter(BaseATSAdapter):
         results = []
         url = f"https://www.jobkorea.co.kr/company/{self.company_id}/recruit"
         res = self.session.get(url, timeout=15)
-        if res.status_code != 200:
-            return results
+        res.raise_for_status()
         soup = BeautifulSoup(res.text, "html.parser")
         seen = set()
         for a in soup.select("a[href*='/Recruit/GI_Read/']"):

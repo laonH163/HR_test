@@ -83,11 +83,29 @@ def run_scraping_phase():
             except Exception as e:
                 print(f"    [ERR] {name} 스레드 구동 실패: {e}", file=sys.stderr)
 
-    # 8-2. [헬스체크] 소스별 수집 건수 점검 — 항상 공고가 있는 플랫폼이 0건이면 스크래퍼 점검 신호.
+    # 8-2. [성공한 수집 출처(Source) 수집] — 차단/네트워크 오류로 실패한 소스의 기존 공고를 보존하기 위함
+    successful_sources = set()
+    if getattr(wanted, "is_last_run_success", False):
+        successful_sources.add("wanted")
+    if getattr(saramin, "is_last_run_success", False):
+        successful_sources.add("saramin")
+    if getattr(jobkorea, "is_last_run_success", False):
+        successful_sources.add("jobkorea")
+    if getattr(gamejob, "is_last_run_success", False):
+        successful_sources.add("gamejob")
+    if getattr(companies, "shiftup_last_run_success", False):
+        successful_sources.add("shiftup")
+    if hasattr(companies, "last_run_adapters"):
+        for adapter in companies.last_run_adapters:
+            if getattr(adapter, "is_last_run_success", False):
+                successful_sources.add(adapter.source)
+
+    # 8-3. [헬스체크] 소스별 수집 건수 점검 — 항상 공고가 있는 플랫폼이 0건이면 스크래퍼 점검 신호.
     #   (게임사 자체수집 0건은 단순 '공고 없음'일 수 있어 경고 대상에서 제외)
     from collections import Counter
     source_counts = Counter(p["source"] for p in all_postings)
     print(f"\n[헬스체크] 소스별 수집 건수: {dict(source_counts)}")
+    print(f"[헬스체크] 성공적으로 완료된 수집 출처 목록: {sorted(list(successful_sources))}")
     platform_sources = ["wanted", "saramin", "jobkorea", "gamejob"]
     zero_platforms = [s for s in platform_sources if source_counts.get(s, 0) == 0]
     if zero_platforms:
@@ -122,7 +140,7 @@ def run_scraping_phase():
     closed_count = 0
     try:
         if today_ids:
-            closed_count, closed_details = analyzer.analyze_closed_postings(today_ids)
+            closed_count, closed_details = analyzer.analyze_closed_postings(today_ids, successful_sources)
             for closed in closed_details:
                 print(f"    -> 마감 감지 완료: [{closed['company_name']}] {closed['title']}")
         print(f"    -> 마감 공고 처리 결과: 총 {closed_count} 건 종료 감지")

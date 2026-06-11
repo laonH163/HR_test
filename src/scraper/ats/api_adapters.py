@@ -36,8 +36,7 @@ class GreenhouseAdapter(BaseATSAdapter):
         results = []
         url = f"https://boards-api.greenhouse.io/v1/boards/{self.board_token}/jobs?content=true"
         res = self.session.get(url, timeout=15)
-        if res.status_code != 200:
-            return results
+        res.raise_for_status()
         for job in res.json().get("jobs", []):
             title = job.get("title", "")
             body = _html_to_text(job.get("content", ""))
@@ -61,8 +60,7 @@ class LeverAdapter(BaseATSAdapter):
         results = []
         url = f"https://api.lever.co/v0/postings/{self.site}?mode=json&limit=200"
         res = self.session.get(url, timeout=15)
-        if res.status_code != 200:
-            return results
+        res.raise_for_status()
         for job in res.json():
             title = job.get("text", "")
             parts = [job.get("descriptionPlain", "") or ""]
@@ -113,8 +111,7 @@ class GreetingHRAdapter(BaseATSAdapter):
             return results
         url = f"https://api.greetinghr.com/ats/v1.1/career/workspaces/{wid}/openings?page=0&pageSize=100"
         res = self.session.get(url, timeout=15)
-        if res.status_code != 200:
-            return results
+        res.raise_for_status()
         for job in res.json().get("data", {}).get("datas", []):
             title = job.get("title", "")
             if not self.is_finance_job(title):

@@ -106,6 +106,9 @@ class JobKoreaScraper:
         """requests 및 최신 개편 CSS 선택자를 적용하여 리팩토링된 잡코리아 수집 엔진"""
         results = []
         keywords = ["회계", "세무", "재무", "자금"]
+        self.is_last_run_success = False
+        success_connections = 0
+        failed_errors = []
 
         for keyword in keywords:
             time.sleep(random.uniform(1.0, 2.5))
@@ -113,7 +116,10 @@ class JobKoreaScraper:
             search_url = f"https://www.jobkorea.co.kr/Search/?stext={keyword}"
             try:
                 res = self.session.get(search_url, headers=self.headers, timeout=15)
-                if res.status_code != 200:
+                if res.status_code == 200:
+                    success_connections += 1
+                else:
+                    failed_errors.append(f"HTTP {res.status_code}")
                     continue
 
                 soup = BeautifulSoup(res.text, "html.parser")
@@ -217,9 +223,14 @@ class JobKoreaScraper:
                     results.append(posting)
                     count += 1
 
-            except Exception:
+            except Exception as e:
+                failed_errors.append(str(e))
                 continue
 
+        if success_connections == 0 and failed_errors:
+            raise RuntimeError(f"잡코리아 수집 연결 완전히 실패 (IP 차단/WAF): {', '.join(set(failed_errors))}")
+
+        self.is_last_run_success = True
         unique_postings = {}
         for item in results:
             unique_postings[item["id"]] = item

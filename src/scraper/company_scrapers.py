@@ -26,6 +26,7 @@ class CompanyScrapers:
     def scrape_shiftup_finance_jobs(self):
         """시프트업(ShiftUp) 공식 채용 사이트에서 재무/회계/세무/자금/경리 공고 직접 수집"""
         results = []
+        self.shiftup_last_run_success = False
         url = "https://shiftup.co.kr/comm/lib/client_lib.php"
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -38,6 +39,7 @@ class CompanyScrapers:
         try:
             response = self.session.post(url, headers=headers, data=data, timeout=10)
             if response.status_code == 200:
+                self.shiftup_last_run_success = True
                 data_json = response.json()
                 jobs = data_json.get("list", [])
                 for job in jobs:
@@ -66,7 +68,10 @@ class CompanyScrapers:
                         "first_seen_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                         "last_updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     })
+            else:
+                self.shiftup_last_run_success = False
         except Exception as e:
+            self.shiftup_last_run_success = False
             print(f"    [ERR] 시프트업 채용 API 수집 실패: {e}", file=sys.stderr)
         return results
 
@@ -79,8 +84,10 @@ class CompanyScrapers:
         """
         from src.scraper.ats.registry import build_official_adapters
         results = []
+        self.last_run_adapters = []
         for adapter in build_official_adapters(session=self.session):
             jobs = adapter.safe_fetch()
             print(f"       · {adapter.company_name}: {len(jobs)}건")
             results.extend(jobs)
+            self.last_run_adapters.append(adapter)
         return results

@@ -30,8 +30,7 @@ class PearlAbyssAdapter(BaseATSAdapter):
     def fetch(self):
         results = []
         res = self.session.get(self.LIST_URL, timeout=15)
-        if res.status_code != 200:
-            return results
+        res.raise_for_status()
         soup = BeautifulSoup(res.text, "html.parser")
         seen = set()
         for a in soup.select("a[href*='_jobOpeningNo']"):
