@@ -3,3 +3,5 @@ data/test_*
 __pycache__/
 .omc/
 .claude/
+memory/
+
