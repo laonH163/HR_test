@@ -4,6 +4,9 @@ import re
 import random
 import time
 from datetime import datetime
+from zoneinfo import ZoneInfo
+
+KST = ZoneInfo("Asia/Seoul")
 from src.utils.http import make_session
 
 class JobKoreaScraper:
@@ -105,7 +108,7 @@ class JobKoreaScraper:
     def scrape_finance_jobs(self, limit=15):
         """requests 및 최신 개편 CSS 선택자를 적용하여 리팩토링된 잡코리아 수집 엔진"""
         results = []
-        keywords = ["회계", "세무", "재무", "자금"]
+        keywords = ["게임 회계", "게임 세무", "게임 재무", "게임 자금"]
         self.is_last_run_success = False
         success_connections = 0
         failed_errors = []
@@ -143,11 +146,32 @@ class JobKoreaScraper:
                     if count >= limit:
                         break
 
-                    title_link = card.select_one("a[href*='/Recruit/GI_Read/']")
+                    # Robust title element finder
+                    title_link = (card.select_one("[data-sentry-component='Title']") or
+                                  card.select_one("a[class*='mb-0.5']") or
+                                  card.select_one("a[href*='/Recruit/GI_Read/'] span.font-semibold"))
+
+                    if not title_link:
+                        # Fallback to any non-empty text a link that points to /Recruit/GI_Read/
+                        for a in card.select("a[href*='/Recruit/GI_Read/']"):
+                            if a.text.strip() and not a.select_one("img"):
+                                title_link = a
+                                break
+
                     if not title_link:
                         continue
 
-                    href = title_link.get("href", "")
+                    href = title_link.get("href", "") if title_link.name == "a" else ""
+                    if not href:
+                        parent_a = title_link.find_parent("a")
+                        if parent_a:
+                            href = parent_a.get("href", "")
+                        else:
+                            for a in card.select("a[href*='/Recruit/GI_Read/']"):
+                                href = a.get("href", "")
+                                if href:
+                                    break
+
                     gno_match = re.search(r"GI_Read/(\d+)", href) or re.search(r"gno=(\d+)", href)
                     if not gno_match:
                         continue
@@ -159,12 +183,18 @@ class JobKoreaScraper:
                         continue
 
                     title = title_link.text.strip()
-                    company_name = "잡코리아 채용 기업"
+                    if not title:
+                        continue
 
-                    # 카드 레벨에서 1차 정보 수집
-                    company_link = card.select_one("a[href*='/Company/']") or card.select_one("a[target='_blank']")
-                    if company_link and company_link != title_link:
-                        company_name = company_link.text.strip()
+                    # Robust company name extraction
+                    company_name = "잡코리아 채용 기업"
+                    company_el = card.select_one("span.truncate.text-gray700") or card.select_one("a span[class*='text-typo-b2-16']")
+                    if company_el:
+                        company_name = company_el.text.strip()
+                    else:
+                        company_link = card.select_one("a[href*='/Company/']") or card.select_one("a[target='_blank']")
+                        if company_link and company_link != title_link:
+                            company_name = company_link.text.strip()
 
                     # 1차 사전 필터링: 게임 업계이면서 재무 직무인지 체크 (불필요한 상세페이지 호출 최소화)
                     if not self.is_game_company(company_name, title) or not self.is_finance_job(title):
@@ -214,11 +244,11 @@ class JobKoreaScraper:
                         "title": title,
                         "origin_url": detail_url,
                         "location": location,
-                        "posted_at": datetime.today().strftime("%Y-%m-%d"),
+                        "posted_at": datetime.now(KST).strftime("%Y-%m-%d"),
                         "status": "ACTIVE",
                         "raw_html": desc_text,
-                        "first_seen_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        "last_updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        "first_seen_at": datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S"),
+                        "last_updated_at": datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
                     }
                     results.append(posting)
                     count += 1

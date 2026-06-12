@@ -5,6 +5,9 @@ import random
 import time
 import urllib.parse
 from datetime import datetime
+from zoneinfo import ZoneInfo
+
+KST = ZoneInfo("Asia/Seoul")
 from src.utils.http import make_session
 
 class GameJobScraper:
@@ -185,11 +188,11 @@ class GameJobScraper:
                                 "title": title,
                                 "origin_url": detail_url,
                                 "location": location,
-                                "posted_at": datetime.today().strftime("%Y-%m-%d"),
+                                "posted_at": datetime.now(KST).strftime("%Y-%m-%d"),
                                 "status": "ACTIVE",
                                 "raw_html": full_desc,
-                                "first_seen_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                                "last_updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                "first_seen_at": datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S"),
+                                "last_updated_at": datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
                             }
                             results.append(posting)
                             count += 1

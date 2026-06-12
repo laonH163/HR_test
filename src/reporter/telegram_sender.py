@@ -1,6 +1,8 @@
 import os
 import requests
 import sys
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 
 # 로컬 디버깅 시 .env 파일 로드 지원
@@ -106,8 +108,13 @@ class TelegramSender:
 
     def build_daily_briefing_message(self, newly_added, modified_count, closed_count, active_postings, weekly_trend=None):
         """당일 수집된 통계 데이터 및 공고 리스트 기반 가독성 높은 텔레그램 카드 메세지 빌딩 (중복 디듀프리케이션 포함)"""
-        date_str = datetime_str = os.getenv("GITHUB_RUN_ID", "로컬") # 가동 컨텍스트
-        run_date = os.getenv('RUN_DATE_STR', datetime_str)
+        KST = ZoneInfo("Asia/Seoul")
+        run_date_env = os.getenv('RUN_DATE_STR', '')
+        try:
+            datetime.strptime(run_date_env, "%Y-%m-%d")
+            run_date = run_date_env
+        except Exception:
+            run_date = datetime.now(KST).strftime("%Y-%m-%d")
 
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         # 중복 제거(Deduplication) 로직 가동 (Milestone 5)
@@ -169,6 +176,18 @@ class TelegramSender:
         # 전체 활성 공고 중복 제거 가동
         deduped_active = deduplicate_postings(active_postings)
 
+        # 오늘 추가된 신규 공고 아이디 구하기 (posted_at 날짜가 오늘 날짜와 일치하는 공고 추출)
+        new_jobs = [j for j in deduped_active if j.get("posted_at") == run_date]
+        deduped_new_count = len(new_jobs)
+
+        # 주요 업데이트 공고도 중복 제거 후 카운트 정밀 정비
+        deduped_modified_jobs = [
+            j for j in deduped_active
+            if j.get("last_updated_at", "").startswith(run_date)
+            and not j.get("first_seen_at", "").startswith(run_date)
+        ]
+        deduped_modified_count = len(deduped_modified_jobs)
+
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         # 컴팩트(Compact) 가변형 템플릿 스위칭 기법 구현 (공고 대량 등록 대응)
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -179,8 +198,8 @@ class TelegramSender:
             f"일자: {run_date}",
             f"━━━━━━━━━━━━━━━━━━━━",
             f"🔥 오늘 감지된 핵심 델타 통계:",
-            f"• 신규 등록 공고: <b>{newly_added} 건</b>",
-            f"• 주요 업데이트 공고: <b>{modified_count} 건</b>",
+            f"• 신규 등록 공고: <b>{deduped_new_count} 건</b>",
+            f"• 주요 업데이트 공고: <b>{deduped_modified_count} 건</b>",
             f"• 채용 종료(마감) 공고: <b>{closed_count} 건</b>",
         ]
 
@@ -191,15 +210,6 @@ class TelegramSender:
             )
 
         msg_lines.append("━━━━━━━━━━━━━━━━━━━━\n")
-
-        # 오늘 추가된 신규 공고 아이디 구하기
-        new_jobs = []
-        if newly_added > 0:
-            # posted_at 날짜가 오늘 날짜와 일치하는 공고 추출
-            new_jobs = [j for j in deduped_active if j.get("posted_at") == run_date]
-            # 만약 날짜 매칭으로 신규 공고가 안 잡힐 때를 대비한 방어적 폴백
-            if not new_jobs:
-                new_jobs = deduped_active[:newly_added]
 
         # 1. 신규 등록 공고가 있을 때 상단 노출
         if new_jobs:

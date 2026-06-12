@@ -4,6 +4,9 @@ import re
 import random
 import time
 from datetime import datetime
+from zoneinfo import ZoneInfo
+
+KST = ZoneInfo("Asia/Seoul")
 from src.utils.http import make_session
 
 class SaraminScraper:
@@ -105,7 +108,7 @@ class SaraminScraper:
     def scrape_finance_jobs(self, limit=15):
         """requests 기반으로 리팩토링된 안정적이고 신속한 사람인 채용공고 수집 엔진"""
         results = []
-        keywords = ["회계", "세무", "재무", "자금"]
+        keywords = ["게임 회계", "게임 세무", "게임 재무", "게임 자금"]
         self.is_last_run_success = False
         success_connections = 0
         failed_errors = []
@@ -113,7 +116,7 @@ class SaraminScraper:
         for keyword in keywords:
             time.sleep(random.uniform(1.0, 2.5))
             # 사람인 검색 페이지 (requests 연동)
-            search_url = f"https://www.saramin.co.kr/zf_user/search/recruit?searchword={keyword}&cat_mcls=2"
+            search_url = f"https://www.saramin.co.kr/zf_user/search/recruit?searchword={keyword}"
             try:
                 res = self.session.get(search_url, headers=self.headers, timeout=15)
                 if res.status_code == 200:
@@ -179,11 +182,11 @@ class SaraminScraper:
                         "title": title,
                         "origin_url": detail_url,
                         "location": location,
-                        "posted_at": datetime.today().strftime("%Y-%m-%d"),
+                        "posted_at": datetime.now(KST).strftime("%Y-%m-%d"),
                         "status": "ACTIVE",
                         "raw_html": desc_text,
-                        "first_seen_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        "last_updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        "first_seen_at": datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S"),
+                        "last_updated_at": datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
                     }
                     results.append(posting)
                     count += 1
