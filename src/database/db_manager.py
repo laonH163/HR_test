@@ -90,6 +90,7 @@ class DBManager:
         # [안전 점진적 마이그레이션] 테이블 생성 이후 미래지향적 확장을 위해 안전하게 새 컬럼 추가
         self._add_column_if_not_exists("job_categories", "preferred_certifications", "TEXT") # 자격증 태그 (JSON)
         self._add_column_if_not_exists("job_categories", "preferred_skills_tags", "TEXT")     # 실무 역량 태그 (JSON)
+        self._add_column_if_not_exists("job_postings", "deadline", "TEXT")  # 마감일 YYYY-MM-DD (D-N 배지 환산, 상시채용은 NULL)
 
     def _add_column_if_not_exists(self, table_name, column_name, column_type):
         """기존 테이블에 컬럼이 없을 때 안전하게 ALTER TABLE을 가동하는 마이그레이션 도우미"""
@@ -117,7 +118,7 @@ class DBManager:
         cursor = conn.cursor()
 
         # 기존 공고 존재 여부 확인
-        cursor.execute("SELECT title, raw_html, status FROM job_postings WHERE id = ?", (posting["id"],))
+        cursor.execute("SELECT title, raw_html, status, deadline FROM job_postings WHERE id = ?", (posting["id"],))
         existing = cursor.fetchone()
 
         is_modified = False
@@ -127,26 +128,32 @@ class DBManager:
             # 델타 분석을 위해 raw_html 내용의 변경 감지 — 단, 공백·날짜 같은 노이즈는
             # 정규화로 무시하여 의미 있는 본문 변경(자격요건·연봉 등)만 MODIFIED로 잡는다.
             content_changed = self._normalize_for_diff(existing["raw_html"]) != self._normalize_for_diff(posting["raw_html"])
-            if content_changed or existing["status"] != posting["status"]:
+            # 마감일 변경(연장/단축)은 지원 전략에 직결되는 실질 변경이므로 MODIFIED로 잡는다.
+            # 단, 수집처가 마감일 정보를 아예 안 주는 경우(None)는 기존 값을 지우지 않는다.
+            new_deadline = posting.get("deadline")
+            deadline_changed = new_deadline is not None and new_deadline != existing["deadline"]
+            if content_changed or deadline_changed or existing["status"] != posting["status"]:
                 cursor.execute("""
                     UPDATE job_postings
-                    SET title = ?, origin_url = ?, location = ?, status = ?, raw_html = ?, last_updated_at = ?
+                    SET title = ?, origin_url = ?, location = ?, status = ?, raw_html = ?, last_updated_at = ?,
+                        deadline = COALESCE(?, deadline)
                     WHERE id = ?
                 """, (
                     posting["title"], posting["origin_url"], posting.get("location"),
                     posting["status"], posting["raw_html"], posting["last_updated_at"],
-                    posting["id"]
+                    new_deadline, posting["id"]
                 ))
                 is_modified = True
         else:
             # 신규 삽입
             cursor.execute("""
-                INSERT INTO job_postings (id, source, company_name, title, origin_url, location, posted_at, status, raw_html, first_seen_at, last_updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO job_postings (id, source, company_name, title, origin_url, location, posted_at, status, raw_html, first_seen_at, last_updated_at, deadline)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 posting["id"], posting["source"], posting["company_name"], posting["title"],
                 posting["origin_url"], posting.get("location"), posting["posted_at"],
-                posting["status"], posting["raw_html"], posting["first_seen_at"], posting["last_updated_at"]
+                posting["status"], posting["raw_html"], posting["first_seen_at"], posting["last_updated_at"],
+                posting.get("deadline")
             ))
             # 신규 삽입은 이 단계에서는 is_modified로 체크하지 않고, DB 수준 신규 건수로 집계 예정
 
@@ -216,7 +223,7 @@ class DBManager:
         # raw_html은 대시보드/텔레그램에서 쓰지 않으므로 제외 (페이로드 축소 + 인라인 주입 리스크 제거)
         cursor.execute("""
             SELECT p.id, p.source, p.company_name, p.title, p.origin_url, p.location,
-                   p.posted_at, p.status, p.first_seen_at, p.last_updated_at,
+                   p.posted_at, p.status, p.first_seen_at, p.last_updated_at, p.deadline,
                    c.primary_category, c.min_experience, c.max_experience,
                    c.salary_min, c.salary_max, c.work_type, c.company_revenue, c.company_size,
                    c.key_requirements, c.preferred_skills, c.tools_used, c.ai_summary,

@@ -7,7 +7,8 @@
     <!-- Tailwind CSS 3 (안정적인 CDN) -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Alpine.js (초경량 반응형 프론트엔드 엔진) -->
-    <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <!-- 버전 고정: 3.x.x 플로팅 태그는 상위 배포에 따라 동작이 바뀔 수 있어 검증된 버전으로 핀 -->
+    <script defer src="https://unpkg.com/alpinejs@3.14.1/dist/cdn.min.js"></script>
     <!-- Google Fonts -->
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Noto+Sans+KR:wght@300;400;500;700&display=swap" rel="stylesheet">
     <style>
@@ -220,6 +221,10 @@
                                     <div class="flex flex-wrap items-center gap-1.5 mt-1">
                                         <span class="text-xs text-gray-400" x-text="job.location || '근무지 확인 필요'">근무지</span>
                                         <span class="px-1.5 py-0.5 text-[10px] rounded font-bold mono" :class="getDaysBadgeClass(job)" x-text="getDaysBadge(job)"></span>
+                                        <!-- 마감일 카운트다운 뱃지 (deadline 보유 공고만) -->
+                                        <template x-if="getDeadlineBadge(job)">
+                                            <span class="px-1.5 py-0.5 text-[10px] rounded font-bold mono" :class="getDeadlineBadgeClass(job)" x-text="getDeadlineBadge(job)"></span>
+                                        </template>
                                         <!-- Cert & Skill tags badges -->
                                         <template x-for="cert in job.preferred_certifications" :key="cert">
                                             <span class="px-1.5 py-0.5 text-[10px] rounded font-bold bg-amber-100 text-amber-800">🎓 <span x-text="cert"></span></span>
@@ -349,6 +354,9 @@
                             <span class="bg-gray-100 px-2 py-0.5 rounded" x-text="getExperienceStr(job)">경력 무관</span>
                             <span class="bg-gray-100 px-2 py-0.5 rounded" x-text="job.work_type">근무형태</span>
                             <span class="px-2 py-0.5 rounded font-bold mono text-[10px]" :class="getDaysBadgeClass(job)" x-text="getDaysBadge(job)"></span>
+                            <template x-if="getDeadlineBadge(job)">
+                                <span class="px-2 py-0.5 rounded font-bold mono text-[10px]" :class="getDeadlineBadgeClass(job)" x-text="getDeadlineBadge(job)"></span>
+                            </template>
                         </div>
 
                         <!-- Mobile Details (Accordion) -->
@@ -672,6 +680,29 @@
                     if (d === 0) return 'bg-emerald-100 text-emerald-700';
                     if (d >= 14) return 'bg-rose-100 text-rose-700';
                     return 'bg-slate-100 text-slate-600';
+                },
+
+                // 마감일(deadline)까지 남은 일수 — 잡코리아 D-N 배지 환산값 기반 (없으면 null)
+                getDeadlineRemain(job) {
+                    if (!job.deadline) return null;
+                    const today = new Date();
+                    today.setHours(0, 0, 0, 0);
+                    const dl = new Date(job.deadline + 'T00:00:00');
+                    if (isNaN(dl)) return null;
+                    return Math.round((dl - today) / 86400000);
+                },
+
+                getDeadlineBadge(job) {
+                    const remain = this.getDeadlineRemain(job);
+                    if (remain === null || remain < 0) return '';
+                    if (remain === 0) return '⏰ 오늘 마감';
+                    return `⏰ 마감 D-${remain}`;
+                },
+
+                getDeadlineBadgeClass(job) {
+                    const remain = this.getDeadlineRemain(job);
+                    if (remain !== null && remain <= 3) return 'bg-rose-100 text-rose-700';
+                    return 'bg-amber-50 text-amber-700';
                 },
 
                 remoteCount() {

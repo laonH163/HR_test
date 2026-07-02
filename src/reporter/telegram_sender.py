@@ -1,7 +1,7 @@
 import os
 import requests
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 
@@ -215,6 +215,36 @@ class TelegramSender:
             )
 
         msg_lines.append("━━━━━━━━━━━━━━━━━━━━\n")
+
+        # 0. 마감 임박(3일 이내) 공고 — 지원 기회를 놓치지 않도록 최상단 노출
+        #    deadline은 잡코리아 D-N 배지를 절대일로 환산해 저장한 값(없으면 상시채용/미상)
+        try:
+            run_dt = datetime.strptime(run_date, "%Y-%m-%d").date()
+        except Exception:
+            run_dt = None
+        urgent_jobs = []
+        if run_dt:
+            for job in deduped_active:
+                d = job.get("deadline")
+                if not d:
+                    continue
+                try:
+                    remain = (datetime.strptime(d, "%Y-%m-%d").date() - run_dt).days
+                except Exception:
+                    continue
+                if 0 <= remain <= 3:
+                    urgent_jobs.append((remain, job))
+            urgent_jobs.sort(key=lambda x: x[0])
+
+        if urgent_jobs:
+            msg_lines.append("<b>⏰ 마감 임박 공고 (3일 이내):</b>")
+            for remain, job in urgent_jobs:
+                dd_label = "오늘 마감!" if remain == 0 else f"D-{remain}"
+                title_clean = job["title"].replace("<", "&lt;").replace(">", "&gt;")
+                company_clean = job["company_name"].replace("<", "&lt;").replace(">", "&gt;")
+                first_url = job["sources"][0]["url"] if job.get("sources") else job.get("origin_url", "")
+                msg_lines.append(f"• <b>[{dd_label}]</b> [{company_clean}] <a href='{first_url}'>{title_clean}</a>")
+            msg_lines.append("")
 
         # 1. 신규 등록 공고가 있을 때 상단 노출
         if new_jobs:

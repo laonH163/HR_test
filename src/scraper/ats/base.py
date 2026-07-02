@@ -42,8 +42,11 @@ class BaseATSAdapter:
         """
         return _is_finance_job(title)
 
-    def build_posting(self, job_id, title, origin_url, raw_html, posted_at=None, location=None):
-        """기존 파이프라인(db_manager.upsert_job_posting)이 기대하는 표준 dict 생성."""
+    def build_posting(self, job_id, title, origin_url, raw_html, posted_at=None, location=None, deadline=None):
+        """기존 파이프라인(db_manager.upsert_job_posting)이 기대하는 표준 dict 생성.
+
+        deadline: 'YYYY-MM-DD' 마감일(있을 때만). 상시채용/미상은 None.
+        """
         now = now_kst_str()
         return {
             "id": job_id,
@@ -57,6 +60,7 @@ class BaseATSAdapter:
             "raw_html": raw_html if raw_html else title,
             "first_seen_at": now,
             "last_updated_at": now,
+            "deadline": deadline,
         }
 
     def fetch(self):
