@@ -1,7 +1,8 @@
 import os
 import json
 import sqlite3
-from datetime import datetime
+
+from src.utils.timeutil import now_kst_str
 
 class HTMLGenerator:
     def __init__(self, db_manager, template_path="templates/dashboard_template.html", output_path="index.html"):
@@ -63,8 +64,8 @@ class HTMLGenerator:
         json_data_str = json_data_str.replace("</", "<\\/")
         html_content = html_content.replace("const JOBS_DATA = [];", f"const JOBS_DATA = {json_data_str};")
 
-        # 갱신 타임스탬프 주입
-        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        # 갱신 타임스탬프 주입 (러너가 UTC여도 한국 시간으로 표기)
+        now_str = now_kst_str()
         html_content = html_content.replace('const UPDATE_TIME_STRING = "2026-05-21 12:00:00";', f'const UPDATE_TIME_STRING = "{now_str}";')
 
         # 최근 7일 수집 추세(시계열) 주입 — 트렌드 위젯용. 실패해도 대시보드는 정상 생성되도록 방어.

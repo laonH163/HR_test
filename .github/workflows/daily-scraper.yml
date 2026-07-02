@@ -43,6 +43,15 @@ jobs:
       if: steps.playwright-cache.outputs.cache-hit != 'true'
       run: python -m playwright install chromium
 
+    # 회귀 게이트 — 사이트 개편 등으로 파서/필터가 깨진 채 수집·커밋되는 것을 차단.
+    # test_wanted_debug는 라이브 네트워크 의존이라 제외한다.
+    - name: Run unit tests (regression gate)
+      env:
+        PYTHONPATH: .
+      run: |
+        pip install pytest
+        python -m pytest tests/ --ignore=tests/test_wanted_debug.py -q
+
     - name: Run E2E Scraping & Hybrid Classification Pipeline
       env:
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -75,7 +84,7 @@ jobs:
           git commit -m "$(cat <<'EOF'
         chore(data): auto-update scraped job postings database & html report
 
-        Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+        Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
         EOF
           )"
           git push origin HEAD:${{ github.ref_name }}

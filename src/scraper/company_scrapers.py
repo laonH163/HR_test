@@ -1,9 +1,9 @@
 import sys
-from datetime import datetime
 
 from bs4 import BeautifulSoup
 
 from src.utils.http import make_session
+from src.utils.timeutil import now_kst_str, today_kst_str
 
 
 class CompanyScrapers:
@@ -62,11 +62,11 @@ class CompanyScrapers:
                         "title": title,
                         "origin_url": "https://shiftup.co.kr/recruit/recruit.php",
                         "location": "서울 서초구",
-                        "posted_at": job.get("wdate", datetime.today().strftime("%Y-%m-%d")).split(" ")[0],
+                        "posted_at": job.get("wdate", today_kst_str()).split(" ")[0],
                         "status": "ACTIVE",
                         "raw_html": f"경력 요건: {experience_str}\n\n상세 정보:\n{raw_desc}",
-                        "first_seen_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        "last_updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        "first_seen_at": now_kst_str(),
+                        "last_updated_at": now_kst_str()
                     })
             else:
                 self.shiftup_last_run_success = False

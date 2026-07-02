@@ -1,4 +1,5 @@
 import argparse
+import re
 import sys
 import traceback
 from datetime import datetime
@@ -17,6 +18,41 @@ from src.classifier.hybrid_engine import HybridClassificationEngine
 from src.analyzer.delta_analyzer import DeltaAnalyzer
 from src.reporter.html_generator import HTMLGenerator
 from src.reporter.telegram_sender import TelegramSender
+
+# 잡코리아 공고 상세 URL에서 GI번호(공고 고유번호) 추출용
+JOBKOREA_GI_RE = re.compile(r"jobkorea\.co\.kr/Recruit/GI_Read/(\d+)")
+
+
+def dedupe_jobkorea_gi(postings):
+    """잡코리아 검색 스크래퍼(id=jobkorea_N)와 기업페이지 어댑터(id={회사}_N)가
+    같은 공고(GI번호 동일)를 서로 다른 id로 이중 수집하는 것을 병합한다.
+
+    기업페이지 어댑터 수집분은 회사명 교차검증(가드레일)을 거쳐 회사 귀속이 정확하므로
+    그쪽을 우선하고, 검색 수집분(source='jobkorea')을 폐기한다.
+    (실측: 넥슨게임즈/네오플처럼 검색 상세페이지 h2 파싱이 회사명을 다르게 잡아
+     클라이언트 dedup 키가 어긋나 대시보드에 이중 노출되던 문제의 근본 교정)
+    """
+    by_gi = {}
+    deduped = []
+    dropped = 0
+    for p in postings:
+        m = JOBKOREA_GI_RE.search(p.get("origin_url") or "")
+        if not m:
+            deduped.append(p)
+            continue
+        gi = m.group(1)
+        if gi not in by_gi:
+            by_gi[gi] = len(deduped)
+            deduped.append(p)
+            continue
+        kept = deduped[by_gi[gi]]
+        if kept["source"] == "jobkorea" and p["source"] != "jobkorea":
+            deduped[by_gi[gi]] = p
+        dropped += 1
+    if dropped:
+        print(f"    [DEDUP] 잡코리아 GI번호 중복 {dropped}건 병합 (기업페이지 어댑터 우선)")
+    return deduped
+
 
 def run_scraping_phase():
     """Milestone 1 & 2: 멀티 소스 공고 수집, 정밀 하이브리드 분류 및 델타 변동 분석"""
@@ -100,6 +136,24 @@ def run_scraping_phase():
             if getattr(adapter, "is_last_run_success", False):
                 successful_sources.add(adapter.source)
 
+    # 8-2b. [실패 소스 집계] — 재시도 소진 후에도 실패한 소스를 로그·알림으로 가시화
+    failed_sources = []
+    for name, scraper in [("wanted", wanted), ("saramin", saramin),
+                          ("jobkorea", jobkorea), ("gamejob", gamejob)]:
+        if not getattr(scraper, "is_last_run_success", False):
+            failed_sources.append(name)
+    if not getattr(companies, "shiftup_last_run_success", False):
+        failed_sources.append("shiftup")
+    if hasattr(companies, "last_run_adapters"):
+        for adapter in companies.last_run_adapters:
+            if not getattr(adapter, "is_last_run_success", False):
+                failed_sources.append(adapter.source)
+    else:
+        failed_sources.append("official_ats(전체)")
+
+    # 8-2c. [잡코리아 GI 중복 병합] — 검색·기업페이지 이중 수집분을 DB 적재 전에 정리
+    all_postings = dedupe_jobkorea_gi(all_postings)
+
     # 8-3. [헬스체크] 소스별 수집 건수 점검 — 항상 공고가 있는 플랫폼이 0건이면 스크래퍼 점검 신호.
     #   (게임사 자체수집 0건은 단순 '공고 없음'일 수 있어 경고 대상에서 제외)
     from collections import Counter
@@ -147,15 +201,21 @@ def run_scraping_phase():
     except Exception as e:
         print(f"    [ERR] Delta 분석 실패: {e}", file=sys.stderr)
 
-    # 11. 실행 이력 로그 수립
+    # 11. 실행 이력 로그 수립 — 실패 소스가 있으면 error_log에 기록해 무음 실패를 남기지 않는다.
+    #     is_success는 '실행 자체의 유효성' 기준: 성공 소스가 하나도 없으면 0(전면 실패).
     try:
+        error_parts = []
+        if failed_sources:
+            error_parts.append("수집 실패 소스: " + ", ".join(sorted(set(failed_sources))))
+        if zero_platforms:
+            error_parts.append("0건 플랫폼(점검 필요): " + ", ".join(zero_platforms))
         log_entry = {
             "run_date": datetime.now(KST).strftime("%Y-%m-%d"),
             "newly_added": newly_added,
             "modified_count": modified_count,
             "closed_count": closed_count,
-            "is_success": 1,
-            "error_log": None
+            "is_success": 1 if successful_sources else 0,
+            "error_log": "; ".join(error_parts) if error_parts else None
         }
         db_manager.insert_scrape_log(log_entry)
         print("[OK] 수집 이력 로그 적재 완료.")
@@ -183,9 +243,10 @@ def run_scraping_phase():
         except Exception:
             weekly_trend = None
 
-        # 텔레그램 마크다운 메세지 빌딩
+        # 텔레그램 마크다운 메세지 빌딩 (실패 소스 경고 포함)
         briefing_text = telegram.build_daily_briefing_message(
-            newly_added, modified_count, closed_count, active_postings, weekly_trend
+            newly_added, modified_count, closed_count, active_postings, weekly_trend,
+            failed_sources=failed_sources
         )
 
         # 최종 메시지 봇 발송

@@ -1,5 +1,6 @@
 .env
 data/test_*
+data/*.bak-*
 __pycache__/
 .omc/
 .claude/

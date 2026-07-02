@@ -1,5 +1,6 @@
 import sqlite3
-from datetime import datetime
+
+from src.utils.timeutil import now_kst_str
 
 class DeltaAnalyzer:
     def __init__(self, db_manager):
@@ -43,7 +44,7 @@ class DeltaAnalyzer:
                     UPDATE job_postings
                     SET status = 'CLOSED', last_updated_at = ?
                     WHERE id = ?
-                """, (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), job_id))
+                """, (now_kst_str(), job_id))
 
                 closed_count += 1
                 closed_details.append({

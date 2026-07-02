@@ -106,7 +106,7 @@ class TelegramSender:
             print(f"    [ERR] 텔레그램 통신 장애: {e}", file=sys.stderr)
             return False
 
-    def build_daily_briefing_message(self, newly_added, modified_count, closed_count, active_postings, weekly_trend=None):
+    def build_daily_briefing_message(self, newly_added, modified_count, closed_count, active_postings, weekly_trend=None, failed_sources=None):
         """당일 수집된 통계 데이터 및 공고 리스트 기반 가독성 높은 텔레그램 카드 메세지 빌딩 (중복 디듀프리케이션 포함)"""
         KST = ZoneInfo("Asia/Seoul")
         run_date_env = os.getenv('RUN_DATE_STR', '')
@@ -202,6 +202,11 @@ class TelegramSender:
             f"• 주요 업데이트 공고: <b>{deduped_modified_count} 건</b>",
             f"• 채용 종료(마감) 공고: <b>{closed_count} 건</b>",
         ]
+
+        # 수집 실패 소스 경고 — 무음 실패 방지. 실패 소스의 기존 공고는 마감 처리 없이 보존된다.
+        if failed_sources:
+            fs = ", ".join(sorted({s.upper() for s in failed_sources}))
+            msg_lines.append(f"⚠️ 수집 실패 소스: <b>{fs}</b> (기존 공고는 보존됨)")
 
         # 최근 7일 추세(시계열) 한 줄 — 전달된 경우에만 노출(테스트 시그니처 호환을 위해 선택적)
         if weekly_trend and weekly_trend.get("days"):
