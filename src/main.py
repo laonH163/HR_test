@@ -1,4 +1,5 @@
 import argparse
+import os
 import re
 import sys
 import traceback
@@ -151,6 +152,18 @@ def run_scraping_phase():
     else:
         failed_sources.append("official_ats(전체)")
 
+    # [실패 마커 기록] — CI가 새 러너(새 IP)로 2차 시도할지 판단하는 게이트 파일.
+    # IP 차단은 러너 단위로 걸려 같은 프로세스 안의 재시도로는 복구되지 않는다(2026-07-02 run48 실측).
+    failed_marker = os.path.join("data", "last_failed_sources.txt")
+    try:
+        if failed_sources:
+            with open(failed_marker, "w", encoding="utf-8") as f:
+                f.write("\n".join(sorted(set(failed_sources))) + "\n")
+        elif os.path.exists(failed_marker):
+            os.remove(failed_marker)
+    except Exception as e:
+        print(f"    [WARN] 실패 마커 기록 실패: {e}", file=sys.stderr)
+
     # 8-2c. [잡코리아 GI 중복 병합] — 검색·기업페이지 이중 수집분을 DB 적재 전에 정리
     all_postings = dedupe_jobkorea_gi(all_postings)
 
@@ -231,6 +244,15 @@ def run_scraping_phase():
         print(f"    [ERR] HTML 대시보드 생성 실패: {e}", file=sys.stderr)
 
     # 13. [Milestone 4] 프라이빗 텔레그램 데일리 요약 발송 가동
+    #     CI 1차 시도에서 실패 소스가 있으면(SUPPRESS_ALERT_ON_SOURCE_FAILURE=1) 발송을 보류하고,
+    #     새 러너(새 IP)의 재시도 실행이 최종 결과를 발송한다 — 같은 날 2통 중복 방지.
+    if failed_sources and os.getenv("SUPPRESS_ALERT_ON_SOURCE_FAILURE") == "1":
+        print("\n[-] 실패 소스 감지 → 텔레그램 발송 보류 (새 러너 재시도 실행이 최종 발송)")
+        print("\n==================================================")
+        print(f"[1차 시도 종료] 신규 추가: {newly_added}건 | 변동 수정: {modified_count}건 | 마감 완료: {closed_count}건 | 실패 소스: {len(set(failed_sources))}곳")
+        print("==================================================")
+        return
+
     print("\n[-] 프라이빗 텔레그램 알림 발송(Milestone 4) 가동 중...")
     try:
         # 데이터베이스 전체 활성 데이터 조회

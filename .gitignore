@@ -1,6 +1,7 @@
 .env
 data/test_*
 data/*.bak-*
+data/last_failed_sources.txt
 __pycache__/
 .omc/
 .claude/

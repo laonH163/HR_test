@@ -1,4 +1,5 @@
 import os
+import re
 import requests
 import sys
 from datetime import datetime, timedelta
@@ -106,6 +107,47 @@ class TelegramSender:
             print(f"    [ERR] 텔레그램 통신 장애: {e}", file=sys.stderr)
             return False
 
+    @staticmethod
+    def _normalize_company(name):
+        """회사명 정규화 — 공백·법인 표기 노이즈 제거 (dedup 키 및 제목 프리픽스 대조용)"""
+        norm = "".join((name or "").split()).lower()
+        for token in ["(주)", "주식회사", "㈜", "（주）"]:
+            norm = norm.replace(token, "")
+        return norm
+
+    def _display_title(self, job):
+        """제목 맨 앞의 '[회사명]' 프리픽스를 제거한 표시용 제목.
+        회사명은 별도로 붙이므로 '[스마일게이트] [스마일게이트] ...' 중복 표기를 막고,
+        소스별로 프리픽스 유무가 갈리는 동일 공고의 dedup 키도 일치시킨다."""
+        title = (job.get("title") or "").strip()
+        m = re.match(r"^\[([^\[\]]{1,30})\]\s*", title)
+        if m and self._normalize_company(m.group(1)) == self._normalize_company(job.get("company_name", "")):
+            stripped = title[m.end():].strip()
+            if stripped:
+                return stripped
+        return title
+
+    @staticmethod
+    def _summarize_failed_sources(failed_sources):
+        """실패 소스 요약. 잡코리아 기업페이지 우회 어댑터가 20곳 이상이라 개별 나열하면
+        경고가 메시지를 뒤덮으므로, 차단이 도메인 단위로 오는 특성에 맞춰 계열로 묶는다."""
+        failed = {str(s).lower() for s in failed_sources}
+        try:
+            from src.scraper.ats.registry import JOBKOREA_COMPANIES
+            jk_family = {"jobkorea", "gamejob"} | {src for _, _, src in JOBKOREA_COMPANIES}
+        except Exception:
+            jk_family = {"jobkorea", "gamejob"}
+        jk_failed = failed & jk_family
+        others = sorted(failed - jk_family)
+        parts = []
+        if len(jk_failed) >= 3:
+            parts.append(f"잡코리아 계열 {len(jk_failed)}곳(도메인 차단 추정)")
+        else:
+            others = sorted(set(others) | jk_failed)
+        if others:
+            parts.append(", ".join(s.upper() for s in others))
+        return " · ".join(parts)
+
     def build_daily_briefing_message(self, newly_added, modified_count, closed_count, active_postings, weekly_trend=None, failed_sources=None):
         """당일 수집된 통계 데이터 및 공고 리스트 기반 가독성 높은 텔레그램 카드 메세지 빌딩 (중복 디듀프리케이션 포함)"""
         KST = ZoneInfo("Asia/Seoul")
@@ -118,59 +160,36 @@ class TelegramSender:
 
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         # 중복 제거(Deduplication) 로직 가동 (Milestone 5)
+        # 키 = 정규화 회사명 + 정규화 제목('[회사명]' 프리픽스 제거 후).
+        # min_experience는 같은 공고인데 소스별 분류가 갈리는 실측 사례
+        # (시프트업 경리/회계: 사람인 0 vs 잡코리아 1)로 미병합을 유발해 키에서 제외.
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         def deduplicate_postings(postings_list):
             deduped = []
-            seen_keys = set()
+            by_key = {}
             for job in postings_list:
-                comp = job["company_name"].strip()
-                tit = job["title"].strip()
-                # 회사명, 공고명, 요구 연차가 거의 유사하면 동일 공고로 취급
-                exp = job.get("min_experience", 0)
-                # 정규화 키: 회사명 공백제거 + 제목 공백제거 + 최소경력
-                norm_comp = "".join(comp.split()).lower()
-                norm_tit = "".join(tit.split()).lower()
-
-                # 법인 특수기호 등 노이즈 제거 정규화
-                for token in ["(주)", "주식회사", "㈜", "（주）"]:
-                    norm_comp = norm_comp.replace(token, "")
-
-                key = (norm_comp, norm_tit, exp)
-
-                if key in seen_keys:
+                key = (
+                    self._normalize_company(job["company_name"]),
+                    "".join(self._display_title(job).split()).lower(),
+                )
+                if key in by_key:
                     # 이미 동일 공고가 수집되었으면 출처 정보만 누적 병합
-                    for existing_job in deduped:
-                        exist_comp = "".join(existing_job["company_name"].split()).lower()
-                        for token in ["(주)", "주식회사", "㈜", "（주）"]:
-                            exist_comp = exist_comp.replace(token, "")
-                        exist_tit = "".join(existing_job["title"].split()).lower()
-                        exist_exp = existing_job.get("min_experience", 0)
-
-                        if (exist_comp, exist_tit, exist_exp) == key:
-                            # 멀티 소스 출처 및 지원 링크 병합
-                            if "sources" not in existing_job:
-                                existing_job["sources"] = [{
-                                    "source": existing_job.get("source", "wanted"),
-                                    "url": existing_job.get("origin_url", "")
-                                }]
-
-                            # 신규 출처 중복체크 후 머지
-                            job_src = job.get("source", "wanted")
-                            if not any(s["source"] == job_src for s in existing_job["sources"]):
-                                existing_job["sources"].append({
-                                    "source": job_src,
-                                    "url": job.get("origin_url", "")
-                                })
-                            break
-                else:
-                    seen_keys.add(key)
-                    # 단일 출처 구조 백업
-                    job_copy = job.copy()
-                    job_copy["sources"] = [{
-                        "source": job.get("source", "wanted"),
-                        "url": job.get("origin_url", "")
-                    }]
-                    deduped.append(job_copy)
+                    existing_job = by_key[key]
+                    job_src = job.get("source", "wanted")
+                    if not any(s["source"] == job_src for s in existing_job["sources"]):
+                        existing_job["sources"].append({
+                            "source": job_src,
+                            "url": job.get("origin_url", "")
+                        })
+                    continue
+                # 단일 출처 구조 백업
+                job_copy = job.copy()
+                job_copy["sources"] = [{
+                    "source": job.get("source", "wanted"),
+                    "url": job.get("origin_url", "")
+                }]
+                by_key[key] = job_copy
+                deduped.append(job_copy)
             return deduped
 
         # 전체 활성 공고 중복 제거 가동
@@ -204,9 +223,10 @@ class TelegramSender:
         ]
 
         # 수집 실패 소스 경고 — 무음 실패 방지. 실패 소스의 기존 공고는 마감 처리 없이 보존된다.
+        # CI에서는 새 러너(새 IP) 재시도까지 거친 뒤의 최종 실패만 여기 도달한다.
         if failed_sources:
-            fs = ", ".join(sorted({s.upper() for s in failed_sources}))
-            msg_lines.append(f"⚠️ 수집 실패 소스: <b>{fs}</b> (기존 공고는 보존됨)")
+            fs = self._summarize_failed_sources(failed_sources)
+            msg_lines.append(f"⚠️ 수집 실패: <b>{fs}</b> — 기존 공고는 보존되며 다음 실행에서 재수집됩니다")
 
         # 최근 7일 추세(시계열) 한 줄 — 전달된 경우에만 노출(테스트 시그니처 호환을 위해 선택적)
         if weekly_trend and weekly_trend.get("days"):
@@ -240,7 +260,7 @@ class TelegramSender:
             msg_lines.append("<b>⏰ 마감 임박 공고 (3일 이내):</b>")
             for remain, job in urgent_jobs:
                 dd_label = "오늘 마감!" if remain == 0 else f"D-{remain}"
-                title_clean = job["title"].replace("<", "&lt;").replace(">", "&gt;")
+                title_clean = self._display_title(job).replace("<", "&lt;").replace(">", "&gt;")
                 company_clean = job["company_name"].replace("<", "&lt;").replace(">", "&gt;")
                 first_url = job["sources"][0]["url"] if job.get("sources") else job.get("origin_url", "")
                 msg_lines.append(f"• <b>[{dd_label}]</b> [{company_clean}] <a href='{first_url}'>{title_clean}</a>")
@@ -250,7 +270,7 @@ class TelegramSender:
         if new_jobs:
             msg_lines.append("<b>✨ 오늘 새로 등록된 신규 채용 정보:</b>")
             for job in new_jobs:
-                title_clean = job["title"].replace("<", "&lt;").replace(">", "&gt;")
+                title_clean = self._display_title(job).replace("<", "&lt;").replace(">", "&gt;")
                 company_clean = job["company_name"].replace("<", "&lt;").replace(">", "&gt;")
                 msg_lines.append(f"• <b>[{company_clean}]</b> {title_clean}")
 
@@ -273,7 +293,7 @@ class TelegramSender:
             else:
                 msg_lines.append("<b>💼 기존에 수집된 현재 채용 진행 중인 공고 목록:</b>")
                 for job in existing_active_jobs:
-                    title_clean = job["title"].replace("<", "&lt;").replace(">", "&gt;")
+                    title_clean = self._display_title(job).replace("<", "&lt;").replace(">", "&gt;")
                     company_clean = job["company_name"].replace("<", "&lt;").replace(">", "&gt;")
                     msg_lines.append(f"• <b>[{company_clean}]</b> {title_clean}")
 

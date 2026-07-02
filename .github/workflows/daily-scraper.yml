@@ -12,7 +12,8 @@ permissions:
 jobs:
   run-daily-scraping:
     runs-on: ubuntu-latest
-
+    outputs:
+      retry_needed: ${{ steps.detect-failed.outputs.retry_needed }}
     steps:
     - name: Checkout private repository code
       uses: actions/checkout@v4
@@ -30,17 +31,22 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
 
+    # 캐시 키에 '실제 설치된' playwright 버전을 사용한다. requirements.txt 해시 키는
+    # '>=' 지정 탓에 playwright가 버전업돼도 키가 안 바뀌어, 구버전 브라우저 캐시를
+    # 신버전이 못 쓰는 불일치가 생겼다(2026-07-02 run48 원티드 3회 전멸의 원인).
+    - name: Get installed Playwright version
+      id: playwright-version
+      run: echo "version=$(python -c 'import playwright; print(playwright.__version__)')" >> "$GITHUB_OUTPUT"
+
     - name: Cache Playwright Chromium
-      id: playwright-cache
       uses: actions/cache@v4
       with:
         path: ~/.cache/ms-playwright
-        key: ${{ runner.os }}-playwright-${{ hashFiles('requirements.txt') }}
-        restore-keys: |
-          ${{ runner.os }}-playwright-
+        key: ${{ runner.os }}-playwright-${{ steps.playwright-version.outputs.version }}
 
+    # 캐시 적중 여부와 무관하게 항상 실행 — 브라우저가 이미 있으면 다운로드를 건너뛰는
+    # 멱등 명령이라 추가 비용이 없고, 캐시가 어긋나 있어도 스스로 복구한다.
     - name: Install Playwright Chromium
-      if: steps.playwright-cache.outputs.cache-hit != 'true'
       run: python -m playwright install chromium
 
     # 회귀 게이트 — 사이트 개편 등으로 파서/필터가 깨진 채 수집·커밋되는 것을 차단.
@@ -52,11 +58,13 @@ jobs:
         pip install pytest
         python -m pytest tests/ --ignore=tests/test_wanted_debug.py -q
 
-    - name: Run E2E Scraping & Hybrid Classification Pipeline
+    - name: Run E2E Scraping & Hybrid Classification Pipeline (1st attempt)
       env:
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         PYTHONPATH: .
+        # 실패 소스가 있으면 알림을 보류한다 — 재시도 잡이 최종 결과 1통만 발송
+        SUPPRESS_ALERT_ON_SOURCE_FAILURE: '1'
       run: |
         # 가동 환경변수 동적 삽입 (러너는 UTC이므로 한국 시간 기준으로 날짜 고정)
         export RUN_DATE_STR=$(TZ='Asia/Seoul' date +'%Y-%m-%d')
@@ -66,6 +74,18 @@ jobs:
           python src/main.py --mode all --force
         else
           python src/main.py --mode all
+        fi
+
+    # 실패 소스 감지 → 새 러너(새 IP)에서 2차 시도를 예약한다.
+    # 잡코리아류 차단은 러너 IP 단위(connect timeout)라 같은 러너 안에서는 복구 불가.
+    - name: Detect failed sources
+      id: detect-failed
+      run: |
+        if [ -s data/last_failed_sources.txt ]; then
+          echo "retry_needed=true" >> "$GITHUB_OUTPUT"
+          echo "1차 시도 실패 소스: $(tr '\n' ' ' < data/last_failed_sources.txt)"
+        else
+          echo "retry_needed=false" >> "$GITHUB_OUTPUT"
         fi
 
     - name: Automatically commit and push database & index.html updates
@@ -91,3 +111,101 @@ jobs:
         else
           echo "No database or index.html updates found today."
         fi
+
+    # 파이프라인 자체가 죽으면(테스트 게이트 실패·크래시) 텔레그램이 아예 침묵하므로,
+    # 잡 실패 시 최소한의 경보를 직접 쏜다 — 무음 실패 방지의 마지막 안전망.
+    - name: Notify pipeline crash via Telegram
+      if: failure()
+      env:
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      run: |
+        curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+          --data-urlencode chat_id="${TELEGRAM_CHAT_ID}" \
+          --data-urlencode text="🚨 수집 파이프라인 1차 실행이 도중에 실패했습니다. 로그 확인: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" > /dev/null
+
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  # 2차 시도 — 1차에서 소스 실패가 있으면 '새 러너(새 IP)'로 전체 파이프라인 재실행.
+  # 수집이 목적인 시스템이므로 실패를 보고로 끝내지 않고 복구를 먼저 시도한다.
+  # 파이프라인은 멱등(upsert + 델타 분석)이라 같은 날 재실행이 안전하다.
+  # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  retry-on-fresh-runner:
+    needs: run-daily-scraping
+    if: needs.run-daily-scraping.outputs.retry_needed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+    # 기본값(github.sha)은 1차 잡이 방금 push한 데이터 커밋을 못 보므로 브랜치 최신 tip을 명시
+    - name: Checkout latest branch tip
+      uses: actions/checkout@v4
+      with:
+        persist-credentials: true
+        ref: ${{ github.ref_name }}
+
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Get installed Playwright version
+      id: playwright-version
+      run: echo "version=$(python -c 'import playwright; print(playwright.__version__)')" >> "$GITHUB_OUTPUT"
+
+    - name: Cache Playwright Chromium
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/ms-playwright
+        key: ${{ runner.os }}-playwright-${{ steps.playwright-version.outputs.version }}
+
+    - name: Install Playwright Chromium
+      run: python -m playwright install chromium
+
+    # 회귀 게이트는 생략 — 1차 잡에서 동일 코드로 이미 통과했다.
+    - name: Run E2E Pipeline (retry — always send final alert)
+      env:
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        PYTHONPATH: .
+      run: |
+        export RUN_DATE_STR=$(TZ='Asia/Seoul' date +'%Y-%m-%d')
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          python src/main.py --mode all --force
+        else
+          python src/main.py --mode all
+        fi
+
+    - name: Automatically commit and push database & index.html updates
+      run: |
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+        [ -f data/scrap_master.db ] && git add data/scrap_master.db || echo "No DB file found"
+        [ -f index.html ] && git add index.html || echo "No index.html file found"
+        [ -f PRD/PROGRESS.md ] && git add PRD/PROGRESS.md || echo "No PROGRESS file found"
+
+        if ! git diff --cached --quiet; then
+          git commit -m "$(cat <<'EOF'
+        chore(data): auto-update scraped job postings database & html report (retry run)
+
+        Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+        EOF
+          )"
+          git push origin HEAD:${{ github.ref_name }}
+        else
+          echo "No database or index.html updates found on retry."
+        fi
+
+    - name: Notify pipeline crash via Telegram
+      if: failure()
+      env:
+        TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      run: |
+        curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+          --data-urlencode chat_id="${TELEGRAM_CHAT_ID}" \
+          --data-urlencode text="🚨 수집 파이프라인 재시도 실행마저 도중에 실패했습니다. 로그 확인: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" > /dev/null
