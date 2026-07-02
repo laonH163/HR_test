@@ -29,6 +29,13 @@ class HTMLGenerator:
             if job_dict.get("tools_used") is None:
                 job_dict["tools_used"] = "EXCEL"
 
+            # 본문 보유 여부 — 제목만 수집된 공고(잡코리아 우회·greetinghr 등)는 근무형태/연차
+            # 분류의 판정 근거가 없으므로, 프론트에서 '미확인'으로 정직하게 표기하기 위한 플래그.
+            # (raw_html이 제목과 같거나 근소하게 긴 경우 = 본문 없음으로 판정)
+            raw_len = job_dict.pop("raw_html_len", 0) or 0
+            title_len = len(job_dict.get("title") or "")
+            job_dict["has_body"] = raw_len > title_len + 60
+
             # 자격증 및 실무 역량 태그의 JSON 리스트 가공 처리 (Milestone 5)
             # SQLite에 문자열화된 JSON 형태로 보관되어 있으므로, 디코딩하여 프론트엔드로 전달
             for field in ["preferred_certifications", "preferred_skills_tags"]:

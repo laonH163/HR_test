@@ -221,9 +221,11 @@ class DBManager:
         conn = self.get_connection()
         cursor = conn.cursor()
         # raw_html은 대시보드/텔레그램에서 쓰지 않으므로 제외 (페이로드 축소 + 인라인 주입 리스크 제거)
+        # 단, 본문 보유 여부 판정용으로 길이만 내려준다(제목만 수집된 공고의 분류 신뢰도 표기용)
         cursor.execute("""
             SELECT p.id, p.source, p.company_name, p.title, p.origin_url, p.location,
                    p.posted_at, p.status, p.first_seen_at, p.last_updated_at, p.deadline,
+                   LENGTH(p.raw_html) AS raw_html_len,
                    c.primary_category, c.min_experience, c.max_experience,
                    c.salary_min, c.salary_max, c.work_type, c.company_revenue, c.company_size,
                    c.key_requirements, c.preferred_skills, c.tools_used, c.ai_summary,

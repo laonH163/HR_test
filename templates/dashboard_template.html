@@ -19,6 +19,8 @@
         .mono {
             font-family: 'JetBrains Mono', monospace;
         }
+        /* Alpine 초기화 전 깜빡임 방지 */
+        [x-cloak] { display: none !important; }
         /* 시스템 다크모드 대응 커스텀 클래스 */
         @media (prefers-color-scheme: dark) {
             body {
@@ -42,7 +44,7 @@
                 border-color: #334155 !important; /* slate-700 */
             }
             tr:hover {
-                background-color: #334155 / 30 !important;
+                background-color: rgba(51, 65, 85, 0.3) !important;
             }
             input, select, textarea {
                 background-color: #1e293b !important;
@@ -91,6 +93,25 @@
     <!-- CONTENT CONTAINER -->
     <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-8">
 
+        <!-- 마감 임박 배너 (3일 이내 마감 공고가 있을 때만 노출) -->
+        <div x-show="urgentJobs().length > 0" x-cloak
+             class="bg-rose-50 border border-rose-200 rounded-lg p-4 mb-6">
+            <div class="flex items-center gap-2 mb-2">
+                <span class="font-bold text-rose-700 text-sm">⏰ 마감 임박 공고 (3일 이내)</span>
+                <span class="mono text-xs bg-rose-600 text-white px-1.5 py-0.5 rounded font-bold" x-text="urgentJobs().length + '건'"></span>
+            </div>
+            <div class="flex flex-wrap gap-2">
+                <template x-for="job in urgentJobs()" :key="job.id">
+                    <a :href="job.origin_url" target="_blank"
+                       class="text-xs bg-white border border-rose-200 hover:border-rose-400 rounded px-2.5 py-1.5 transition-colors">
+                        <span class="font-bold text-rose-600 mono" x-text="getDeadlineRemain(job) === 0 ? '오늘' : 'D-' + getDeadlineRemain(job)"></span>
+                        <span class="text-slate-700 font-semibold ml-1" x-text="'[' + job.company_name + ']'"></span>
+                        <span class="text-slate-600 ml-0.5" x-text="job.title"></span>
+                    </a>
+                </template>
+            </div>
+        </div>
+
         <!-- SUMMARY CARDS -->
         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
             <div class="bg-white p-5 rounded-lg shadow-sm border border-gray-100">
@@ -98,16 +119,38 @@
                 <div class="text-3xl font-bold mt-2 text-slate-800" x-text="jobs.length">0</div>
             </div>
             <div class="bg-white p-5 rounded-lg shadow-sm border border-gray-100">
-                <div class="text-xs text-gray-500 font-bold uppercase tracking-wider">재택근무 가능 공고</div>
-                <div class="text-3xl font-bold mt-2 text-indigo-600" x-text="remoteCount()">0</div>
+                <div class="text-xs text-gray-500 font-bold uppercase tracking-wider">신규 공고 (3일 내)</div>
+                <div class="text-3xl font-bold mt-2 text-emerald-600" x-text="recentNewCount()">0</div>
             </div>
             <div class="bg-white p-5 rounded-lg shadow-sm border border-gray-100">
-                <div class="text-xs text-gray-500 font-bold uppercase tracking-wider">신입 지원 가능</div>
-                <div class="text-3xl font-bold mt-2 text-emerald-600" x-text="entryCount()">0</div>
+                <div class="text-xs text-gray-500 font-bold uppercase tracking-wider">마감 임박 (7일 내)</div>
+                <div class="text-3xl font-bold mt-2 text-rose-600" x-text="closingSoonCount()">0</div>
             </div>
             <div class="bg-white p-5 rounded-lg shadow-sm border border-gray-100">
                 <div class="text-xs text-gray-500 font-bold uppercase tracking-wider">북마크 관심 공고</div>
                 <div class="text-3xl font-bold mt-2 text-amber-500" x-text="bookmarks.length">0</div>
+            </div>
+        </div>
+
+        <!-- 최근 7일 수집 트렌드 (신규/마감 미니 차트) — 데이터 있을 때만 노출 -->
+        <div x-show="trendDaily().length > 0" x-cloak class="bg-white p-5 rounded-lg shadow-sm border border-gray-100 mb-8">
+            <div class="flex justify-between items-center mb-3">
+                <div class="text-xs text-gray-500 font-bold uppercase tracking-wider">최근 7일 수집 트렌드</div>
+                <div class="text-xs text-gray-400">
+                    누적 신규 <span class="font-bold text-emerald-600" x-text="(trend.total_new || 0) + '건'"></span> ·
+                    마감 <span class="font-bold text-rose-500" x-text="(trend.total_closed || 0) + '건'"></span>
+                </div>
+            </div>
+            <div class="flex items-end gap-2 h-20">
+                <template x-for="day in trendDaily()" :key="day.run_date">
+                    <div class="flex-1 flex flex-col items-center gap-1">
+                        <div class="w-full flex items-end justify-center gap-0.5 h-14">
+                            <div class="w-2.5 bg-emerald-400 rounded-t" :style="'height:' + trendBarHeight(day.newly_added) + '%'" :title="'신규 ' + (day.newly_added || 0) + '건'"></div>
+                            <div class="w-2.5 bg-rose-300 rounded-t" :style="'height:' + trendBarHeight(day.closed_count) + '%'" :title="'마감 ' + (day.closed_count || 0) + '건'"></div>
+                        </div>
+                        <div class="mono text-[9px] text-gray-400" x-text="(day.run_date || '').slice(5)"></div>
+                    </div>
+                </template>
             </div>
         </div>
 
@@ -139,6 +182,7 @@
                         <option value="풀재택">풀재택</option>
                         <option value="하이브리드 (주2~3회 재택)">하이브리드</option>
                         <option value="전면출근">전면출근</option>
+                        <option value="미확인">미확인 (본문 미수집)</option>
                     </select>
                 </div>
                 <!-- Personal Filters (Bookmark / Application State) -->
@@ -152,6 +196,33 @@
                         <option value="memo">📝 개인 메모 있는 공고</option>
                     </select>
                 </div>
+            </div>
+
+            <!-- 회사 필터 · 정렬 · 내보내기 -->
+            <div class="border-t border-gray-100 pt-4 flex flex-col sm:flex-row gap-4 items-stretch sm:items-end">
+                <div class="w-full sm:w-56">
+                    <label class="block text-xs font-bold text-gray-500 mb-2">회사별 필터</label>
+                    <select x-model="selectedCompany" class="w-full px-4 py-2 rounded-lg border border-gray-200 focus:outline-none focus:ring-2 focus:ring-slate-800 text-sm bg-white">
+                        <option value="all">전체 회사</option>
+                        <template x-for="c in companyList()" :key="c.name">
+                            <option :value="c.name" x-text="c.name + ' (' + c.count + ')'"></option>
+                        </template>
+                    </select>
+                </div>
+                <div class="w-full sm:w-48">
+                    <label class="block text-xs font-bold text-gray-500 mb-2">정렬 기준</label>
+                    <select x-model="sortBy" class="w-full px-4 py-2 rounded-lg border border-gray-200 focus:outline-none focus:ring-2 focus:ring-slate-800 text-sm bg-white">
+                        <option value="latest">최신 등록순</option>
+                        <option value="deadline">마감 임박순</option>
+                        <option value="company">회사명순</option>
+                        <option value="longest">등록 오래된순</option>
+                    </select>
+                </div>
+                <div class="flex-1"></div>
+                <button @click="exportCsv()"
+                        class="text-xs bg-slate-800 text-white px-4 py-2.5 rounded-lg hover:bg-slate-700 font-bold whitespace-nowrap">
+                    ⬇ 필터 결과 CSV 저장 (<span x-text="filteredJobs().length"></span>건)
+                </button>
             </div>
 
             <!-- Custom Tags (CPA, IFRS 등) Quick Filter -->
@@ -201,7 +272,7 @@
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-gray-100">
-                        <template x-for="job in filteredJobs()" :key="job.id">
+                        <template x-for="job in sortedJobs()" :key="job.id">
                             <tr class="hover:bg-slate-50 transition-colors" :class="isApplied(job.id) ? 'bg-slate-50/50 opacity-75' : ''">
                                 <!-- Bookmark Star -->
                                 <td class="px-6 py-4 text-center">
@@ -247,7 +318,9 @@
                                 <!-- Experience Requirement -->
                                 <td class="px-6 py-4 mono" x-text="getExperienceStr(job)">연차</td>
                                 <!-- Work Type -->
-                                <td class="px-6 py-4 text-xs font-semibold text-slate-700" x-text="job.work_type">근무형태</td>
+                                <td class="px-6 py-4 text-xs font-semibold"
+                                    :class="getWorkTypeStr(job) === '미확인' ? 'text-gray-400' : 'text-slate-700'"
+                                    x-text="getWorkTypeStr(job)">근무형태</td>
                                 <!-- Deduplicated Multiple Sources Badges -->
                                 <td class="px-6 py-4">
                                     <div class="flex flex-wrap gap-1">
@@ -326,7 +399,7 @@
 
             <!-- MOBILE CARD VIEW -->
             <div class="block lg:hidden divide-y divide-gray-100">
-                <template x-for="job in filteredJobs()" :key="job.id">
+                <template x-for="job in sortedJobs()" :key="job.id">
                     <div class="p-5 hover:bg-slate-50 transition-colors" :class="isApplied(job.id) ? 'bg-slate-50/50 opacity-75' : ''">
                         <div class="flex justify-between items-start gap-2 mb-3">
                             <div class="flex items-center gap-1.5">
@@ -352,7 +425,7 @@
                             x-text="job.title" @click="toggleDetails(job.id)">제목</h5>
                         <div class="flex flex-wrap gap-1.5 mt-3 text-[11px] text-slate-500">
                             <span class="bg-gray-100 px-2 py-0.5 rounded" x-text="getExperienceStr(job)">경력 무관</span>
-                            <span class="bg-gray-100 px-2 py-0.5 rounded" x-text="job.work_type">근무형태</span>
+                            <span class="bg-gray-100 px-2 py-0.5 rounded" x-text="getWorkTypeStr(job)">근무형태</span>
                             <span class="px-2 py-0.5 rounded font-bold mono text-[10px]" :class="getDaysBadgeClass(job)" x-text="getDaysBadge(job)"></span>
                             <template x-if="getDeadlineBadge(job)">
                                 <span class="px-2 py-0.5 rounded font-bold mono text-[10px]" :class="getDeadlineBadgeClass(job)" x-text="getDeadlineBadge(job)"></span>
@@ -439,7 +512,9 @@
                 searchQuery: '',
                 selectedCategory: 'all',
                 selectedWorkType: 'all',
+                selectedCompany: 'all',
                 selectedPersonalFilter: 'all',
+                sortBy: 'latest',
                 maxExperienceFilter: '15',
                 activeDetails: [],
                 activeTagFilters: [], // CPA, IFRS, 내부회계 등
@@ -534,8 +609,11 @@
                         // 2. 대분류 필터링
                         const matchCat = this.selectedCategory === 'all' || job.primary_category === this.selectedCategory;
 
-                        // 3. 근무형태 필터링
-                        const matchWork = this.selectedWorkType === 'all' || job.work_type === this.selectedWorkType;
+                        // 2-1. 회사 필터링
+                        const matchCompany = this.selectedCompany === 'all' || job.company_name === this.selectedCompany;
+
+                        // 3. 근무형태 필터링 (본문 미수집 공고는 '미확인'으로 취급 — 근거 없는 '전면출근' 확정 방지)
+                        const matchWork = this.selectedWorkType === 'all' || this.getWorkTypeStr(job) === this.selectedWorkType;
 
                         // 4. 요구 최소 연차 필터링
                         let matchExp = true;
@@ -567,7 +645,7 @@
                             });
                         }
 
-                        return matchQuery && matchCat && matchWork && matchExp && matchPersonal && matchTags;
+                        return matchQuery && matchCat && matchCompany && matchWork && matchExp && matchPersonal && matchTags;
                     });
                 },
 
@@ -636,12 +714,23 @@
                 },
 
                 getExperienceStr(job) {
-                    if (job.min_experience === 0 && (!job.max_experience || job.max_experience <= 1)) {
+                    // 신입은 분류기가 (0, 1)로 명시한 경우만. min=0·max=null은 '무관 폴백'이라
+                    // '신입 지원가능'으로 확정 표기하면 안 된다(실측: 활성 공고의 61%가 폴백).
+                    if (job.min_experience === 0 && job.max_experience === 1) {
                         return "신입 지원가능";
+                    }
+                    if ((job.min_experience || 0) === 0 && !job.max_experience) {
+                        return job.has_body === false ? "경력 미상" : "경력 무관";
                     }
                     const min = job.min_experience || 0;
                     const max = job.max_experience ? `~${job.max_experience}년` : "년 이상";
                     return `경력 ${min}${max}`;
+                },
+
+                // 본문 미수집 공고(제목만 수집)는 근무형태 판정 근거가 없으므로 '미확인' 표기
+                getWorkTypeStr(job) {
+                    if (job.has_body === false) return '미확인';
+                    return job.work_type || '미확인';
                 },
 
                 getCompanyScale(job) {
@@ -705,18 +794,108 @@
                     return 'bg-amber-50 text-amber-700';
                 },
 
-                remoteCount() {
-                    return this.jobs.filter(j => j.work_type !== '전면출근').length;
+                // 최근 3일 내 최초 수집된 신규 공고 수
+                recentNewCount() {
+                    return this.jobs.filter(j => {
+                        const d = this.getDaysOpen(j);
+                        return d !== null && d <= 2;
+                    }).length;
                 },
 
-                entryCount() {
-                    return this.jobs.filter(j => j.min_experience === 0).length;
+                // 7일 내 마감 예정 공고 수
+                closingSoonCount() {
+                    return this.jobs.filter(j => {
+                        const r = this.getDeadlineRemain(j);
+                        return r !== null && r >= 0 && r <= 7;
+                    }).length;
+                },
+
+                // 마감 임박(3일 이내) 공고 — 상단 배너용, 임박순 정렬
+                urgentJobs() {
+                    return this.jobs
+                        .filter(j => {
+                            const r = this.getDeadlineRemain(j);
+                            return r !== null && r >= 0 && r <= 3;
+                        })
+                        .sort((a, b) => this.getDeadlineRemain(a) - this.getDeadlineRemain(b));
+                },
+
+                // 회사별 필터 드롭다운 옵션 (활성 공고 기준 동적 생성, 가나다순)
+                companyList() {
+                    const counts = {};
+                    this.jobs.forEach(j => { counts[j.company_name] = (counts[j.company_name] || 0) + 1; });
+                    return Object.keys(counts)
+                        .sort((a, b) => a.localeCompare(b, 'ko'))
+                        .map(name => ({ name, count: counts[name] }));
+                },
+
+                // 필터 결과에 정렬 적용 — 렌더 루프는 이 함수를 사용
+                sortedJobs() {
+                    const list = this.filteredJobs().slice();
+                    const normRemain = (j) => {
+                        const r = this.getDeadlineRemain(j);
+                        return (r === null || r < 0) ? null : r;
+                    };
+                    if (this.sortBy === 'deadline') {
+                        list.sort((a, b) => {
+                            const ra = normRemain(a), rb = normRemain(b);
+                            if (ra === null && rb === null) return 0;
+                            if (ra === null) return 1;  // 마감일 없는 공고(상시)는 뒤로
+                            if (rb === null) return -1;
+                            return ra - rb;
+                        });
+                    } else if (this.sortBy === 'company') {
+                        list.sort((a, b) => a.company_name.localeCompare(b.company_name, 'ko'));
+                    } else if (this.sortBy === 'longest') {
+                        list.sort((a, b) => String(a.first_seen_at || '').localeCompare(String(b.first_seen_at || '')));
+                    } else {
+                        list.sort((a, b) => String(b.posted_at || '').localeCompare(String(a.posted_at || '')));
+                    }
+                    return list;
+                },
+
+                // 최근 7일 수집 트렌드 (과거→최신 순으로 뒤집어 차트에 공급)
+                trendDaily() {
+                    const daily = (this.trend && this.trend.daily) || [];
+                    return daily.slice().reverse();
+                },
+
+                trendBarHeight(v) {
+                    const days = this.trendDaily();
+                    const max = Math.max(1, ...days.map(d => Math.max(d.newly_added || 0, d.closed_count || 0)));
+                    return Math.max(3, Math.round(((v || 0) / max) * 100));
+                },
+
+                // 현재 필터·정렬 결과를 CSV로 저장 (엑셀 한글 호환 BOM 포함)
+                exportCsv() {
+                    const rows = this.sortedJobs();
+                    if (!rows.length) return;
+                    const esc = v => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
+                    const header = ['회사명', '공고제목', '직무분류', '최소경력', '최대경력', '근무형태', '마감일', '등록일', '최초수집일', '링크'];
+                    const lines = [header.map(esc).join(',')];
+                    rows.forEach(j => {
+                        lines.push([
+                            j.company_name, j.title, j.primary_category || '',
+                            j.min_experience == null ? '' : j.min_experience,
+                            j.max_experience == null ? '' : j.max_experience,
+                            this.getWorkTypeStr(j), j.deadline || '상시/미상', j.posted_at || '',
+                            String(j.first_seen_at || '').slice(0, 10), j.origin_url
+                        ].map(esc).join(','));
+                    });
+                    // 선두 BOM(0xFEFF) — 엑셀이 UTF-8 한글을 올바르게 열도록 함 (리터럴 대신 명시 코드로 가독성 확보)
+                    const blob = new Blob([String.fromCharCode(0xFEFF) + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+                    const a = document.createElement('a');
+                    a.href = URL.createObjectURL(blob);
+                    a.download = 'game_finance_jobs_' + String(UPDATE_TIME_STRING || '').slice(0, 10) + '.csv';
+                    a.click();
+                    URL.revokeObjectURL(a.href);
                 },
 
                 resetFilters() {
                     this.searchQuery = '';
                     this.selectedCategory = 'all';
                     this.selectedWorkType = 'all';
+                    this.selectedCompany = 'all';
                     this.selectedPersonalFilter = 'all';
                     this.maxExperienceFilter = '15';
                     this.activeTagFilters = [];
