@@ -6,6 +6,8 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 
+from src.utils.dedup import content_key, normalize_company, source_rank
+
 # 로컬 디버깅 시 .env 파일 로드 지원
 load_dotenv()
 
@@ -110,10 +112,7 @@ class TelegramSender:
     @staticmethod
     def _normalize_company(name):
         """회사명 정규화 — 공백·법인 표기 노이즈 제거 (dedup 키 및 제목 프리픽스 대조용)"""
-        norm = "".join((name or "").split()).lower()
-        for token in ["(주)", "주식회사", "㈜", "（주）"]:
-            norm = norm.replace(token, "")
-        return norm
+        return normalize_company(name)
 
     def _display_title(self, job):
         """제목 맨 앞의 '[회사명]' 프리픽스를 제거한 표시용 제목.
@@ -160,36 +159,44 @@ class TelegramSender:
 
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         # 중복 제거(Deduplication) 로직 가동 (Milestone 5)
-        # 키 = 정규화 회사명 + 정규화 제목('[회사명]' 프리픽스 제거 후).
+        # 키 = src/utils/dedup.content_key — 정규화 회사명 + 정규화 제목.
+        # '[컴투스홀딩스]' 같은 회사 포함관계 프리픽스는 회사키로 승격해 병합한다.
         # min_experience는 같은 공고인데 소스별 분류가 갈리는 실측 사례
         # (시프트업 경리/회계: 사람인 0 vs 잡코리아 1)로 미병합을 유발해 키에서 제외.
+        # 대표 카드는 공식 소스(기업 어댑터) 우선 — 회사명·본문·링크가 가장 정확하다.
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         def deduplicate_postings(postings_list):
             deduped = []
             by_key = {}
             for job in postings_list:
-                key = (
-                    self._normalize_company(job["company_name"]),
-                    "".join(self._display_title(job).split()).lower(),
-                )
+                key = content_key(job.get("company_name"), job.get("title"))
+                job_src = job.get("source", "wanted")
                 if key in by_key:
                     # 이미 동일 공고가 수집되었으면 출처 정보만 누적 병합
                     existing_job = by_key[key]
-                    job_src = job.get("source", "wanted")
                     if not any(s["source"] == job_src for s in existing_job["sources"]):
                         existing_job["sources"].append({
                             "source": job_src,
                             "url": job.get("origin_url", "")
                         })
+                    # 공식 소스가 뒤에 왔으면 대표 카드를 공식 쪽 필드로 교체
+                    if source_rank(job_src) < source_rank(existing_job.get("source", "wanted")):
+                        merged_sources = existing_job["sources"]
+                        existing_job.clear()
+                        existing_job.update(job)
+                        existing_job["sources"] = merged_sources
                     continue
                 # 단일 출처 구조 백업
                 job_copy = job.copy()
                 job_copy["sources"] = [{
-                    "source": job.get("source", "wanted"),
+                    "source": job_src,
                     "url": job.get("origin_url", "")
                 }]
                 by_key[key] = job_copy
                 deduped.append(job_copy)
+            # 바로가기 링크도 공식 → 플랫폼 순으로 정렬 (동순위는 수집 순서 유지)
+            for job in deduped:
+                job["sources"].sort(key=lambda s: source_rank(s["source"]))
             return deduped
 
         # 전체 활성 공고 중복 제거 가동

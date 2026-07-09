@@ -530,23 +530,39 @@
                 },
 
                 // 수집처 중복 공고 디듀프리케이션(De-duplication) 가공 처리
+                // ※ src/utils/dedup.py의 content_key/source_rank와 동일 로직 미러링 — 한쪽을 바꾸면 양쪽 함께 수정
                 processRawJobsData() {
                     const rawList = JOBS_DATA;
                     const deduped = [];
                     const seenKeys = {};
 
-                    rawList.forEach(job => {
-                        const comp = job.company_name.trim();
-                        const tit = job.title.trim();
-                        const exp = job.min_experience || 0;
-
-                        // 중복 판별 정규화 키 수립
-                        let normComp = comp.replace(/\s+/g, '').toLowerCase();
+                    // 플랫폼 검색 소스 — 이 외(기업페이지 어댑터·자체 채용페이지)는 모두 '공식'으로 간주
+                    const PLATFORM_SOURCES = ["wanted", "saramin", "jobkorea", "gamejob"];
+                    const sourceRank = (src) => PLATFORM_SOURCES.includes((src || "").toLowerCase()) ? 1 : 0;
+                    const normalizeCompany = (name) => {
+                        let n = (name || "").replace(/\s+/g, '').toLowerCase();
                         for (const token of ["(주)", "주식회사", "㈜", "（주）"]) {
-                            normComp = normComp.split(token).join("");
+                            n = n.split(token).join("");
                         }
-                        const normTit = tit.replace(/\s+/g, '').toLowerCase();
-                        const key = normComp + "_" + normTit + "_" + exp;
+                        return n;
+                    };
+
+                    rawList.forEach(job => {
+                        // 중복 판별 정규화 키 수립 — '[컴투스홀딩스]'처럼 회사명과 포함관계인
+                        // 제목 프리픽스는 회사키로 승격하고 제목키에서 제거 (교차 소스 병합용).
+                        // min_experience는 소스별 분류가 갈려 미병합을 유발하므로 키에서 제외.
+                        let normComp = normalizeCompany(job.company_name);
+                        let tit = (job.title || "").trim();
+                        const m = tit.match(/^\[([^\[\]]{1,30})\]\s*/);
+                        if (m) {
+                            const hint = normalizeCompany(m[1]);
+                            if (hint.length >= 2 && normComp && (normComp.includes(hint) || hint.includes(normComp))) {
+                                const stripped = tit.slice(m[0].length).trim();
+                                if (stripped) tit = stripped;
+                                if (hint.length > normComp.length) normComp = hint;
+                            }
+                        }
+                        const key = normComp + "_" + tit.replace(/\s+/g, '').toLowerCase();
 
                         if (seenKeys[key] !== undefined) {
                             // 이미 리스트에 담긴 동일 공고가 있다면 소스 출처만 합산 병합
@@ -557,6 +573,12 @@
                                     source: job.source,
                                     url: job.origin_url
                                 });
+                            }
+                            // 공식 소스가 뒤에 왔으면 대표 카드(회사명·지원하기 링크)를 공식 쪽으로 교체
+                            if (sourceRank(job.source) < sourceRank(existingJob.source)) {
+                                const merged = Object.assign({}, job);
+                                merged.sources = existingJob.sources;
+                                deduped[existingIdx] = merged;
                             }
                         } else {
                             // 신규 등록
@@ -569,6 +591,9 @@
                             seenKeys[key] = deduped.length - 1;
                         }
                     });
+
+                    // 소스 배지도 공식 → 플랫폼 순으로 정렬 (동순위는 수집 순서 유지)
+                    deduped.forEach(j => j.sources.sort((a, b) => sourceRank(a.source) - sourceRank(b.source)));
 
                     this.jobs = deduped;
                 },
