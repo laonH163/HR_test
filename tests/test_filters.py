@@ -45,6 +45,29 @@ class TestUnifiedFinanceFilter(unittest.TestCase):
         self.assertTrue(filters.is_game_company("일반서비스", "게임 개발 스튜디오에서 회계를 구합니다"))
         self.assertFalse(filters.is_game_company("대형제조업", "생산 관리 세무 조정 담당자"))
 
+    def test_dev_roles_in_finance_department_blocked(self):
+        """재무 부서 소속 개발직은 차단 — 부서명 '재무'로 통과하던 오탐 (2026-07-09 실측)."""
+        negatives = [
+            "[재무관리본부] 정산 시스템 개발 담당자",  # 넥슨 실측 사례
+            "재무시스템 개발자 (경력)",
+            "회계 ERP 엔지니어 모집",
+            "Financial Systems Engineer",
+            "정산 플랫폼 백엔드 프로그래머",
+        ]
+        for title in negatives:
+            self.assertFalse(filters.is_finance_job(title), f"걸러져야 함: {title}")
+
+    def test_finance_adjacent_it_and_normal_roles_preserved(self):
+        """회계 유관 IT 담당·정상 재무 직무는 개발직 차단에 휘말리지 않아야 함."""
+        positives = [
+            "[Finance Div.] 내부회계/리스크관리 IT 담당자 (3-7년)",  # 크래프톤 실측
+            "[컴투스 홀딩스] 재무관리 팀장 (10년 이상)",
+            "국내외 자회사 결산 및 감사대응(계약직)",
+            "재무기획(FP&A) 담당자 (4년-7년)",
+        ]
+        for title in positives:
+            self.assertTrue(filters.is_finance_job(title), f"통과해야 함: {title}")
+
 
 if __name__ == "__main__":
     unittest.main()
