@@ -147,7 +147,7 @@ class TelegramSender:
             parts.append(", ".join(s.upper() for s in others))
         return " · ".join(parts)
 
-    def build_daily_briefing_message(self, newly_added, modified_count, closed_count, active_postings, weekly_trend=None, failed_sources=None):
+    def build_daily_briefing_message(self, newly_added, modified_count, closed_count, active_postings, weekly_trend=None, failed_sources=None, zero_platforms=None):
         """당일 수집된 통계 데이터 및 공고 리스트 기반 가독성 높은 텔레그램 카드 메세지 빌딩 (중복 디듀프리케이션 포함)"""
         KST = ZoneInfo("Asia/Seoul")
         run_date_env = os.getenv('RUN_DATE_STR', '')
@@ -234,6 +234,12 @@ class TelegramSender:
         if failed_sources:
             fs = self._summarize_failed_sources(failed_sources)
             msg_lines.append(f"⚠️ 수집 실패: <b>{fs}</b> — 기존 공고는 보존되며 다음 실행에서 재수집됩니다")
+
+        # '성공했지만 0건' 플랫폼 경고 — 예외 없이 빈손인 무음 고장을 가시화한다.
+        # (실측: 원티드가 상세 DOM 개편으로 한 달간 0건이었는데 error_log에만 남아 아무도 몰랐음)
+        if zero_platforms:
+            zp = " · ".join(str(s).upper() for s in sorted(zero_platforms))
+            msg_lines.append(f"⚠️ 수집 0건 플랫폼: <b>{zp}</b> — 검색 오동작 가능성, 해당 소스 마감 판정은 보류됩니다")
 
         # 최근 7일 추세(시계열) 한 줄 — 전달된 경우에만 노출(테스트 시그니처 호환을 위해 선택적)
         if weekly_trend and weekly_trend.get("days"):

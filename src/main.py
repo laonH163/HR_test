@@ -203,11 +203,13 @@ def run_scraping_phase():
             traceback.print_exc()
 
     # 10. Delta Analyzer 연동 (마감 CLOSED 상태 갱신)
+    #     0건 플랫폼은 검색 오동작 의심 소스로 전달 — 해당 소스 공고의 마감 오판(플랩)을 막는다.
     print("\n[-] Delta Analyzer 가동: 수집 종료된 마감 공고 선별 중...")
     closed_count = 0
     try:
         if today_ids:
-            closed_count, closed_details = analyzer.analyze_closed_postings(today_ids, successful_sources)
+            closed_count, closed_details = analyzer.analyze_closed_postings(
+                today_ids, successful_sources, suspect_sources=set(zero_platforms))
             for closed in closed_details:
                 print(f"    -> 마감 감지 완료: [{closed['company_name']}] {closed['title']}")
         print(f"    -> 마감 공고 처리 결과: 총 {closed_count} 건 종료 감지")
@@ -265,10 +267,10 @@ def run_scraping_phase():
         except Exception:
             weekly_trend = None
 
-        # 텔레그램 마크다운 메세지 빌딩 (실패 소스 경고 포함)
+        # 텔레그램 마크다운 메세지 빌딩 (실패 소스·0건 플랫폼 경고 포함)
         briefing_text = telegram.build_daily_briefing_message(
             newly_added, modified_count, closed_count, active_postings, weekly_trend,
-            failed_sources=failed_sources
+            failed_sources=failed_sources, zero_platforms=zero_platforms
         )
 
         # 최종 메시지 봇 발송

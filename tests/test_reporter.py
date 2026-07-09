@@ -29,5 +29,20 @@ class TestTelegramReporter(unittest.TestCase):
         self.assertIn("더블유게임즈", text)
         self.assertIn("https://wanted.co.kr/wd/111", text)
 
+    def test_zero_platform_warning_line(self):
+        """'성공했지만 0건' 플랫폼 경고가 브리핑에 노출되는지 — 무음 고장 가시화"""
+        sender = TelegramSender()
+        os.environ["RUN_DATE_STR"] = "2026-07-09"
+
+        text = sender.build_daily_briefing_message(
+            0, 0, 0, [], zero_platforms=["wanted", "gamejob"]
+        )
+        self.assertIn("수집 0건 플랫폼", text)
+        self.assertIn("GAMEJOB · WANTED", text)
+
+        # 0건 플랫폼이 없으면 경고 라인도 없어야 함
+        clean_text = sender.build_daily_briefing_message(0, 0, 0, [], zero_platforms=[])
+        self.assertNotIn("수집 0건 플랫폼", clean_text)
+
 if __name__ == '__main__':
     unittest.main()

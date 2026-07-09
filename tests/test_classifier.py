@@ -226,5 +226,41 @@ class TestClassifierAndDelta(unittest.TestCase):
             self.assertEqual(cursor.fetchone()["status"], "ACTIVE")
         conn.close()
 
+    def test_delta_analyzer_suspect_sources_hold(self):
+        """'성공했지만 0건'인 소스(suspect)는 마감 판정을 보류해 플랩(마감↔부활 반복)을 막는다.
+
+        실측(2026-07-08~09): 게임잡이 격일로 0건을 반환해 컴투스 공고가 수집 다음 날
+        마감 오판정되고, 재수집되면 부활하는 패턴이 반복됐다."""
+        def make_posting(job_id, source):
+            return {
+                "id": job_id, "source": source, "company_name": "컴투스 홀딩스",
+                "title": "재무관리 팀장", "origin_url": "https://example.com",
+                "location": "서울", "posted_at": "2026-07-08", "status": "ACTIVE",
+                "raw_html": "본문", "first_seen_at": "2026-07-08 09:00:00",
+                "last_updated_at": "2026-07-08 09:00:00",
+            }
+
+        # 게임잡 공고 1건 + 크래프톤 공고 1건 활성 적재
+        self.db_manager.upsert_job_posting(make_posting("gamejob_282441", "gamejob"))
+        self.db_manager.upsert_job_posting(make_posting("krafton_999", "krafton"))
+
+        # 오늘 수집: 둘 다 미수집, 두 소스 모두 '성공' — 단 gamejob은 0건(suspect)
+        today_ids = {"saramin_1", "saramin_2", "saramin_3"}
+        closed_count, closed_details = self.analyzer.analyze_closed_postings(
+            today_ids, successful_sources={"gamejob", "krafton", "saramin"},
+            suspect_sources={"gamejob"},
+        )
+
+        # suspect인 gamejob 공고는 보류(ACTIVE 유지), krafton 공고만 정상 마감
+        self.assertEqual(closed_count, 1)
+        self.assertEqual(closed_details[0]["id"], "krafton_999")
+        conn = self.db_manager.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT status FROM job_postings WHERE id = 'gamejob_282441'")
+        self.assertEqual(cursor.fetchone()["status"], "ACTIVE")
+        cursor.execute("SELECT status FROM job_postings WHERE id = 'krafton_999'")
+        self.assertEqual(cursor.fetchone()["status"], "CLOSED")
+        conn.close()
+
 if __name__ == '__main__':
     unittest.main()
