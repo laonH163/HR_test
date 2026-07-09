@@ -3,15 +3,25 @@ from bs4 import BeautifulSoup
 import re
 import random
 import time
-import urllib.parse
-from datetime import datetime
+from datetime import datetime, date, timedelta
 from zoneinfo import ZoneInfo
 
 KST = ZoneInfo("Asia/Seoul")
 from src.scraper import filters
 from src.utils.http import make_session
 
+# 목록 행의 마감 표기: "~07/31" (절대일) 또는 "D-3" (카운트다운). "상시"/"채용시"는 마감일 없음.
+_ROW_DEADLINE_ABS_RE = re.compile(r"~\s*(\d{1,2})/(\d{1,2})")
+_ROW_DEADLINE_DDAY_RE = re.compile(r"\bD-(\d+)\b")
+
+
 class GameJobScraper:
+    # 2026-07 개편: 구 검색 URL(List_GI/GI_Search_Keyword.asp)은 키워드를 무시하고
+    # 전체 공고판 최신 40건으로 리다이렉트됨 → 재무 공고가 그 40건 안에 있을 때만
+    # 우연히 수집되는 복불복(격일 0건 플랩의 근본 원인). 실제 검색은 joblist 페이지가
+    # XHR로 호출하는 아래 POST 엔드포인트가 담당한다 (2026-07-09 브라우저 캡처로 확정).
+    SEARCH_ENDPOINT = "https://www.gamejob.co.kr/Recruit/_GI_Job_List/"
+
     def __init__(self):
         self.headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -43,121 +53,189 @@ class GameJobScraper:
 
         return True
 
+    @staticmethod
+    def _build_search_payload(keyword, page=1):
+        """joblist 페이지의 XHR과 동일한 폼 페이로드 (브라우저 실캡처 계약 그대로)"""
+        return {
+            "isDefault": "true",
+            "condition[searchtype]": "all",
+            "condition[searchstring]": keyword,  # UTF-8 그대로 (구 ASP의 EUC-KR 인코딩 불필요)
+            "condition[menucode]": "",
+            "condition[tabcode]": "1",
+            "page": str(page),
+            "direct": "0",
+            "order": "1",
+            "pagesize": "40",
+            "tabcode": "1",
+        }
+
+    @staticmethod
+    def _parse_row_deadline(row_text, today=None):
+        """목록 행 텍스트에서 마감일을 'YYYY-MM-DD'로 환산. 상시/채용시 등은 None.
+
+        "~07/31"은 연도가 없어 오늘 기준으로 추론한다(연말→연초로 넘어가는 마감은 내년으로)."""
+        if today is None:
+            today = datetime.now(KST).date()
+
+        m = _ROW_DEADLINE_DDAY_RE.search(row_text or "")
+        if m:
+            return (today + timedelta(days=int(m.group(1)))).strftime("%Y-%m-%d")
+
+        m = _ROW_DEADLINE_ABS_RE.search(row_text or "")
+        if not m:
+            return None
+        month, day = int(m.group(1)), int(m.group(2))
+        try:
+            d = date(today.year, month, day)
+        except ValueError:
+            return None
+        # 오늘이 연말인데 마감이 01/15처럼 크게 과거로 계산되면 내년 마감으로 해석
+        if (d - today).days < -300:
+            try:
+                d = date(today.year + 1, month, day)
+            except ValueError:
+                return None
+        return d.strftime("%Y-%m-%d")
+
+    @classmethod
+    def _parse_search_rows(cls, fragment_html):
+        """검색 결과 HTML 조각에서 (GI번호, 회사명, 제목, 마감일) 행 목록을 추출.
+
+        조각 최상위가 div.jobListWrap이면 구조 정상. 컨테이너 자체가 없으면 마크업
+        개편/차단으로 보고 None을 반환해 호출부가 '무음 0건'이 아닌 실패로 다루게 한다."""
+        soup = BeautifulSoup(fragment_html, "html.parser")
+        if not soup.select_one(".jobListWrap"):
+            return None
+
+        rows = []
+        seen = set()
+        for tr in soup.select("tr"):
+            a_tag = tr.select_one("a[href*='GI_Read/View']")
+            if not a_tag:
+                continue
+            m = re.search(r"GI_No=(\d+)", a_tag.get("href", ""))
+            if not m or m.group(1) in seen:
+                continue
+            seen.add(m.group(1))
+
+            title = a_tag.get_text(" ", strip=True)
+            first_td = tr.select_one("td")
+            company = first_td.get_text(" ", strip=True) if first_td else ""
+            # 회사명 셀에 제목이 섞여 뽑히는 마크업 변형 방어: 제목과 같으면 비움
+            if company == title:
+                company = ""
+            deadline = cls._parse_row_deadline(tr.get_text(" ", strip=True))
+            rows.append({"gi_no": m.group(1), "company": company, "title": title, "deadline": deadline})
+        return rows
+
     def scrape_finance_jobs(self, limit=15):
-        """EUC-KR 검색어 전송 및 UTF-8 응답 파싱, 그리고 직무 타이틀 필터가 반영된 게임잡 수집기"""
+        """게임잡 재무·회계·세무·자금 키워드 수집 (신형 XHR 검색 엔드포인트 기반)"""
         results = []
         keywords = ["회계", "세무", "재무", "자금"]
         self.is_last_run_success = False
         success_connections = 0
         failed_errors = []
 
+        xhr_headers = dict(self.headers)
+        xhr_headers["X-Requested-With"] = "XMLHttpRequest"
+        xhr_headers["Referer"] = "https://www.gamejob.co.kr/Recruit/joblist?menucode=searchtot&searchtype=all"
+
         for keyword in keywords:
             time.sleep(random.uniform(1.0, 2.5))
 
             try:
-                keyword_encoded = urllib.parse.quote(keyword, encoding="euc-kr")
-            except Exception:
-                keyword_encoded = urllib.parse.quote(keyword)
-
-            search_url = f"https://www.gamejob.co.kr/List_GI/GI_Search_Keyword.asp?S_Div=GI_Keyword&S_Text={keyword_encoded}"
-
-            try:
-                res = self.session.get(search_url, headers=self.headers, timeout=15)
-                if res.status_code == 200:
-                    success_connections += 1
-                else:
+                res = self.session.post(
+                    self.SEARCH_ENDPOINT,
+                    data=self._build_search_payload(keyword),
+                    headers=xhr_headers,
+                    timeout=15,
+                )
+                if res.status_code != 200:
                     failed_errors.append(f"HTTP {res.status_code}")
                     continue
 
-                html_text = res.content.decode("utf-8", errors="replace")
-
-                soup = BeautifulSoup(html_text, "html.parser")
-
-                # 배너 및 우측 인기 공고를 엄격히 배제하고, 검색결과 목록 테이블(.tblList)의 링크만 수집합니다.
-                gi_elements = soup.select("table.tblList a[href*='/Recruit/GI_Read/View']") or soup.select(".tblList a[href*='/Recruit/GI_Read/View']")
-
-                unique_gi_nos = []
-                for el in gi_elements:
-                    href = el.get("href", "")
-                    gno_match = re.search(r"GI_No=(\d+)", href)
-                    if not gno_match:
-                        continue
-                    gi_no = gno_match.group(1)
-                    if gi_no not in unique_gi_nos:
-                        unique_gi_nos.append(gi_no)
+                fragment = res.content.decode("utf-8", errors="replace")
+                rows = self._parse_search_rows(fragment)
+                if rows is None:
+                    # 200이지만 목록 컨테이너가 없음 — 마크업 개편/차단. 무음 0건으로 넘기지 않는다.
+                    failed_errors.append("검색 응답에서 jobListWrap 컨테이너 인식 실패 (마크업 개편 의심)")
+                    continue
+                success_connections += 1
 
                 count = 0
-                for gi_no in unique_gi_nos:
+                for row in rows:
                     if count >= limit:
                         break
 
+                    gi_no = row["gi_no"]
                     job_id = f"gamejob_{gi_no}"
                     detail_url = f"https://www.gamejob.co.kr/Recruit/GI_Read/View?GI_No={gi_no}"
 
-                    # 중복 적재 방지
+                    # 중복 적재 방지 (키워드 간 교차 중복)
                     if any(r["id"] == job_id for r in results):
+                        continue
+
+                    # 목록 단계 사전 필터 — 재무 직군이 아니거나 블랙리스트면 상세 요청 자체를 생략
+                    if row["title"] and not self.is_finance_job(row["title"]):
+                        continue
+                    if not self.is_valid_company_and_job(row["company"], row["title"]):
                         continue
 
                     # 각 공고 상세 페이지 접속 및 정보 수집
                     time.sleep(random.uniform(0.5, 1.2))
                     try:
                         detail_res = self.session.get(detail_url, headers=self.headers, timeout=10)
+                        if detail_res.status_code != 200:
+                            continue
                         detail_html = detail_res.content.decode("utf-8", errors="replace")
+                        detail_soup = BeautifulSoup(detail_html, "html.parser")
 
-                        if detail_res.status_code == 200:
-                            detail_soup = BeautifulSoup(detail_html, "html.parser")
+                        # 회사명·제목은 목록 행이 1차 소스 — 상세 <title>의 첫 대괄호는 회사명이
+                        # 아니라 '[전략실]' '[Finance Div.]' 같은 부서명인 공고가 많아(2026-07-09 실측)
+                        # 회사명 오염을 일으킨다. 목록 행의 회사 컬럼이 실제 게시 회사다.
+                        company_name = row["company"] or "게임회사"
+                        title = row["title"] or "재무 회계 담당자"
 
-                            # 타이틀 파싱 '[회사명] 공고제목' 형식 분석
+                        # 목록 행 값이 비었을 때만 상세 <title> '[회사명] 공고제목' 패턴으로 폴백
+                        if not row["company"] or not row["title"]:
                             page_title = detail_soup.title.text.strip() if detail_soup.title else ""
-                            company_name = "게임회사"
-                            title = "재무 회계 담당자"
-
                             match = re.search(r"\[(.*?)\]\s*(.*)", page_title)
                             if match:
-                                company_name = match.group(1).strip()
-                                title = match.group(2).strip()
-                                if title.endswith("- 게임잡"):
-                                    title = title[:-8].strip()
-                            else:
-                                h1_el = detail_soup.select_one("h1") or detail_soup.select_one(".tit")
-                                if h1_el:
-                                    title = h1_el.text.strip()
-                                co_el = detail_soup.select_one(".co-name") or detail_soup.select_one(".company-name")
-                                if co_el:
-                                    company_name = co_el.text.strip()
+                                if not row["company"]:
+                                    company_name = match.group(1).strip()
+                                if not row["title"]:
+                                    title = match.group(2).strip()
+                                    if title.endswith("- 게임잡"):
+                                        title = title[:-8].strip()
 
-                            # 직무 필터링: 반드시 재무/회계/세무 직군이어야만 승인
-                            if not self.is_finance_job(title):
-                                continue
-
-                            # 기업 및 직무 블랙리스트 엄격 필터링 (람정, 카지노, 딜러 등)
-                            if not self.is_valid_company_and_job(company_name, title):
-                                continue
-
-                            # 공고 본문 내용
-                            desc_container = detail_soup.select_one(".tbList") or detail_soup.select_one(".viewCol") or detail_soup.select_one("body")
-                            full_desc = desc_container.get_text(separator="\n").strip() if desc_container else title
-
-                            location = "서울/경기"
-
-                            posting = {
-                                "id": job_id,
-                                "source": "gamejob",
-                                "company_name": company_name,
-                                "title": title,
-                                "origin_url": detail_url,
-                                "location": location,
-                                "posted_at": datetime.now(KST).strftime("%Y-%m-%d"),
-                                "status": "ACTIVE",
-                                "raw_html": full_desc,
-                                "first_seen_at": datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S"),
-                                "last_updated_at": datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
-                            }
-                            results.append(posting)
-                            count += 1
-
-                        else:
+                        # 직무 필터링: 반드시 재무/회계/세무 직군이어야만 승인 (상세 제목 기준 최종 방어선)
+                        if not self.is_finance_job(title):
                             continue
+
+                        # 기업 및 직무 블랙리스트 엄격 필터링 (람정, 카지노, 딜러 등)
+                        if not self.is_valid_company_and_job(company_name, title):
+                            continue
+
+                        # 공고 본문 내용
+                        desc_container = detail_soup.select_one(".tbList") or detail_soup.select_one(".viewCol") or detail_soup.select_one("body")
+                        full_desc = desc_container.get_text(separator="\n").strip() if desc_container else title
+
+                        posting = {
+                            "id": job_id,
+                            "source": "gamejob",
+                            "company_name": company_name,
+                            "title": title,
+                            "origin_url": detail_url,
+                            "location": "서울/경기",
+                            "posted_at": datetime.now(KST).strftime("%Y-%m-%d"),
+                            "status": "ACTIVE",
+                            "raw_html": full_desc,
+                            "first_seen_at": datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S"),
+                            "last_updated_at": datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S"),
+                            "deadline": row["deadline"],  # 목록 행 "~MM/DD"/"D-N" 환산값 (상시는 None)
+                        }
+                        results.append(posting)
+                        count += 1
 
                     except Exception:
                         continue
@@ -167,7 +245,7 @@ class GameJobScraper:
                 continue
 
         if success_connections == 0 and failed_errors:
-            raise RuntimeError(f"게임잡 수집 연결 완전히 실패 (IP 차단/WAF): {', '.join(set(failed_errors))}")
+            raise RuntimeError(f"게임잡 수집 연결 완전히 실패 (IP 차단/WAF/마크업 개편): {', '.join(set(failed_errors))}")
 
         self.is_last_run_success = True
         unique_postings = {}
