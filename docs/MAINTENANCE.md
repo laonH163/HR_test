@@ -1,0 +1,112 @@
+# 유지보수 기록 — 구조 결정·함정·검증 루틴
+
+이 문서는 미래의 유지보수자(사람이든 AI 세션이든)가 **같은 삽질을 반복하지 않도록**
+핵심 결정의 "왜"와 알려진 함정을 기록한다. 코드가 진실이고, 이 문서는 지도다.
+
+## 필수 검증 루틴 (수정 전 반드시 읽기)
+
+1. **스크래퍼 변경 시**: 실제 실행 결과로 검증한다. 수집 건수가 기존 대비 급감하면
+   원인 규명 전 배포 금지. (예: `python -c "from src.scraper.gamejob_scraper import ...; print(len(jobs))"`)
+2. **필터(filters.py) 변경 시**: DB 전체 제목으로 BEFORE/AFTER 전수 대조 —
+   새로 제외/통과되는 제목 목록을 눈으로 확인한다. 2026-07-09 개발직 차단 때
+   83건 대조로 부수 피해 0을 확인하고 배포한 것이 표준 절차.
+3. **중복 병합 키 변경 시**: `src/utils/dedup.py`(Python)와
+   `templates/dashboard_template.html`의 `processRawJobsData()`(JS)가 **동일 로직으로
+   미러링**되어 있다. 한쪽만 고치면 텔레그램과 대시보드의 병합 결과가 갈라진다.
+   반드시 양쪽을 함께 수정하고, 실DB로 Python 결과와 생성된 index.html의 JS 실행
+   결과(Node)를 대조한다.
+4. **커밋 전**: `git diff --cached`로 민감정보(텔레그램 토큰·chat_id·개인정보) 스캔.
+
+## 사이트별 수집 계약과 함정 (실측 이력)
+
+### 원티드 (Playwright)
+- **2026-06-10경 상세 DOM 개편**: 첫 `<h2>`가 공고 제목이 아니라 "포지션 상세" 섹션
+  헤딩이 됨 → 제목을 h2로 덮어쓰던 로직이 전 카드를 최종 재무검증에서 탈락시켜
+  **한 달간 에러 없이 0건**(무음 고장). 교정: 제목 보정은 `h1` → `<title>` 태그
+  패턴("[회사명] 제목 채용 공고 | 원티드")만 신뢰. 탈락 시 `[WANTED DROP]` 로그.
+- CI 러너에서는 검색 결과가 로컬보다 적게 렌더링될 수 있다(IP·지역 요인 추정).
+- 2026-07-02: playwright 버전업 + 구버전 브라우저 캐시 히트로 실행 파일 부재 크래시
+  → 워크플로 캐시 키를 playwright 버전 기준으로 교정, install은 무조건 실행(멱등).
+
+### 게임잡
+- **2026-07 개편**: 구 검색 URL(`List_GI/GI_Search_Keyword.asp`)이 키워드를 무시하고
+  전체 공고판 최신 40건으로 리다이렉트 → 재무 공고가 우연히 40건 안에 있는 날만
+  수집되는 복불복(격일 0건↔수집 플랩, 마감 오판 반복의 근본 원인).
+- 실제 검색은 XHR: `POST https://www.gamejob.co.kr/Recruit/_GI_Job_List/`
+  (form: `isDefault=true, condition[searchtype]=all, condition[searchstring]=키워드(UTF-8),
+  condition[menucode]=, condition[tabcode]=1, page, direct=0, order=1, pagesize=40, tabcode=1`,
+  헤더 `X-Requested-With: XMLHttpRequest`, 토큰·쿠키 불요).
+- 응답은 `div.jobListWrap` HTML 조각. **컨테이너가 안 잡히면 0건이 아니라 수집 실패로
+  승격**시켜 마크업 재개편을 즉시 가시화한다.
+- 상세 `<title>`의 첫 대괄호는 회사명이 아니라 "[전략실]"·"[Finance Div.]" 같은
+  부서명인 공고가 많다 — **회사명·제목은 목록 행이 1차 소스**.
+
+### 잡코리아
+- 검색(`/Search/?stext=`)과 기업페이지(`/company/{id}/recruit`)는 정적 HTML로 정상.
+- **GI 상세(`/Recruit/GI_Read/{gno}`)는 React SPA로 전환**(2026-07-09 확인). 정적
+  HTML에 JD가 없고, 브라우저 렌더링 후에도 본문 텍스트가 없다(공고가 **이미지 한 장**).
+  → OCR 없이는 본문 확보 불가. 어댑터의 `fetch_detail=False`(제목 기반)가 최종 결정.
+- 기업페이지 company_id는 폐지·재배정될 수 있어 **회사명 교차검증**(`_verify_company`)
+  실패 시 전량 폐기한다(과거 실사고: '빅게임스튜디오' id가 바이오회사로 재배정).
+- 기업페이지는 과거 마감 공고도 나열한다 — `마감 (~날짜)` 배지는 수집 제외(좀비 방지).
+- IP 차단은 러너(머신) 단위로 온다. 같은 프로세스 안의 재시도로는 복구되지 않으므로
+  CI는 실패 마커(`data/last_failed_sources.txt`) 감지 시 **새 러너에서 2차 시도**한다.
+
+### greetinghr (카카오게임즈·111퍼센트·슈퍼센트·에피드게임즈)
+- 목록 API: `GET https://api.greetinghr.com/ats/v1.1/career/workspaces/{wid}/openings`
+  — `dueDate`(예: `2026-08-02T14:59:59Z` = KST 자정 직전)가 마감일. 단 `2033-…`처럼
+  1년 이상 남은 값은 사실상 상시채용이라 None 처리.
+- 상세 API(`/openings/{id}`)는 404. 대신 **공고 페이지가 SSR**
+  (`https://{sub}.career.greetinghr.com/ko/o/{id}`) — `[class*='Content']` 중 최대
+  텍스트 블록이 JD 본문(클래스 해시는 빌드마다 바뀌므로 부분 일치로 잡는다).
+
+### 사람인
+- 목록 `.job_date` 배지("~ 07/31(금)"·"D-N"·"오늘마감"·"상시채용")를
+  `src/utils/dateparse.parse_deadline_badge`로 환산(게임잡과 공용).
+
+## 파이프라인 구조 결정
+
+- **중복의 2계층 처리**: ① 같은 잡코리아 GI를 검색·기업페이지가 이중 수집한 것은
+  파이프라인에서 병합(`main.dedupe_jobkorea_gi`, DB에 1벌만). ② 소스가 아예 다른
+  같은 공고(공식 vs 플랫폼)는 **DB에 양쪽 다 보존**하고 표시 계층(텔레그램·대시보드)
+  에서 병합한다 — "누락 0 우선" 원칙 + 멀티소스 링크 기능 보존. 병합 키는
+  `content_key`: 정규화 회사명+제목, 제목 앞 `[회사명류]` 프리픽스가 회사명과
+  포함관계면(컴투스 ⊂ 컴투스홀딩스) 회사키로 승격. 대표 카드는 공식 소스
+  (`source_rank`: 플랫폼 4종 외 전부 공식) 우선.
+- **마감(CLOSED) 판정의 3중 방어**(delta_analyzer): ① 오늘 전체 수집 3건 미만이면
+  전면 보류 ② 수집 실패 소스의 공고 보존 ③ '성공했지만 0건'인 플랫폼(suspect)의
+  공고 보류 — 4개 재무 키워드 검색이 전부 0건인 것은 공고 전멸보다 검색 오동작일
+  개연성이 압도적(게임잡 플랩 실측).
+- **posted_at = 수집일**이다(원 공고 등록일 아님). 텔레그램 '신규' 판정이
+  `posted_at == 실행일`에 의존하므로 이 의미를 바꾸면 신규 알림이 깨진다.
+- **deadline은 None이면 기존 값 보존**(upsert의 COALESCE) — 마감일을 안 주는 소스가
+  이미 확보된 마감일을 지우지 않도록.
+- **DB 마이그레이션**은 `_add_column_if_not_exists`로 점진 추가만 한다(파괴적 변경 금지).
+- **시각은 전부 KST**(`src/utils/timeutil`) — CI 러너가 UTC라 naive now()를 쓰면
+  신규/변경 판정이 하루 밀린다(실사고 이력).
+
+## 분류(hybrid_engine) 규칙 요약
+
+- 재무 판별은 **제목만** 사용한다 — 본문 매칭은 'ir'∈hiring, '감사합니다' 오탐이
+  심해 폐기(라이브 53/53 전부 오탐이었던 이력).
+- 개발직 차단: 제목에 개발자·개발 담당·시스템 개발·엔지니어 등이 있으면 재무 부서
+  소속이어도 제외. 단 "내부회계 IT 담당자"류(회계 유관 IT)는 의도적으로 통과.
+- 연차 추출은 제목의 '신입'(단독) 신호가 본문보다 우선 — 본문의 "경력 개발 기회"
+  같은 문구가 신입 판정을 무력화하지 않도록.
+
+## CI (daily-scraper.yml)
+
+- 매일 08:00 KST 스케줄 + workflow_dispatch. 수집 전 pytest 게이트
+  (라이브 네트워크 테스트 `test_wanted_debug.py` 제외).
+- 1차 시도에서 실패 소스가 있으면 `SUPPRESS_ALERT_ON_SOURCE_FAILURE=1`로 발송을
+  보류하고 새 러너 재시도 잡이 최종 1통만 발송한다(같은 날 2통 방지).
+  재시도 잡 checkout은 `ref: 브랜치 tip` 필수 — 기본 github.sha는 1차 잡의
+  데이터 커밋을 못 본다.
+- 자동 커밋 대상: `data/scrap_master.db`, `index.html`, `PRD/PROGRESS.md`(있으면).
+
+## 미해결/보류 목록
+
+- 잡코리아 계열 본문(이미지 JD) — OCR 없이는 불가, 최종 보류.
+- ninehire(넵튠·엔픽셀·라이온하트) 직수집 — 공고가 런타임 API 로딩이라 경로 미확보.
+- key_requirements 리스트 파싱 — 불릿 없는 본문 형식(펄어비스 등)은 기본값 폴백.
+- DB 매일 커밋으로 저장소 비대화 — 분리 방안은 Pages 배포 영향이 있어 사용자 결정 대기.
