@@ -53,8 +53,18 @@ class HybridClassificationEngine:
         # 3. 기본값: 전면출근 (지정어가 특별히 없을 경우)
         return "전면출근"
 
-    def extract_experience(self, text):
-        """경력 연차 범위 파싱 (예: "3년 이상", "경력 5년~10년", "신입", "무관")"""
+    def extract_experience(self, text, title=None):
+        """경력 연차 범위 파싱 (예: "3년 이상", "경력 5년~10년", "신입", "무관").
+
+        title이 주어지면 제목의 '신입'(단독) 신호를 본문보다 우선한다 — 본문의
+        '경력 개발 기회'·'인턴 경력 우대' 같은 문구가 신입 공고 판정을 무력화하고
+        우대사항의 연차로 오판정하는 것을 막는다. '신입/경력' 병행 제목은 기존
+        로직(숫자 범위 우선)에 맡긴다."""
+        if title:
+            norm_title = title.replace(" ", "")
+            if "신입" in norm_title and "경력" not in norm_title:
+                return 0, 1
+
         norm_text = text.replace(" ", "")
 
         # 신입 케이스
@@ -223,8 +233,8 @@ class HybridClassificationEngine:
         # 1. 근무 형태 분류
         work_type = self.classify_work_type(analysis_text)
 
-        # 2. 최소/최대 연차 추출
-        exp_min, exp_max = self.extract_experience(analysis_text)
+        # 2. 최소/최대 연차 추출 (제목의 '신입' 단독 신호는 본문보다 우선)
+        exp_min, exp_max = self.extract_experience(analysis_text, title=title)
 
         # 3. 연봉 추출
         sal_min, sal_max = self.extract_salary(analysis_text)

@@ -226,6 +226,39 @@ class TestClassifierAndDelta(unittest.TestCase):
             self.assertEqual(cursor.fetchone()["status"], "ACTIVE")
         conn.close()
 
+    def test_newbie_title_overrides_body_career_words(self):
+        """제목이 '신입' 단독이면 본문의 '경력 개발'·'인턴 경력 우대' 문구가 있어도 신입(0~1)."""
+        mn, mx = self.engine.extract_experience(
+            "신입 회계 담당자\n입사 후 경력 개발 기회 제공, 인턴 경력 우대",
+            title="신입 회계 담당자",
+        )
+        self.assertEqual((mn, mx), (0, 1))
+
+        # '신입/경력' 병행 제목은 기존 로직 유지 (경력 무관 처리)
+        mn, mx = self.engine.extract_experience(
+            "[웹젠] 자금(신입/경력)\n본문", title="[웹젠] 자금(신입/경력)")
+        self.assertEqual((mn, mx), (0, None))
+
+        # title 미전달(레거시 호출)은 기존 동작 그대로
+        mn, mx = self.engine.extract_experience("지원 자격: 경력 3년 ~ 5년 담당자")
+        self.assertEqual((mn, mx), (3, 5))
+
+    def test_get_companies_seen_before(self):
+        """신규 진입사 판별용 — cutoff 이전 이력 회사만 반환 (당일 신규는 제외)."""
+        def make_posting(job_id, company, first_seen):
+            return {
+                "id": job_id, "source": "saramin", "company_name": company,
+                "title": "재무 담당자", "origin_url": "https://example.com",
+                "location": "서울", "posted_at": first_seen[:10], "status": "ACTIVE",
+                "raw_html": "본문", "first_seen_at": first_seen, "last_updated_at": first_seen,
+            }
+        self.db_manager.upsert_job_posting(make_posting("saramin_1", "컴투스", "2026-07-01 09:00:00"))
+        self.db_manager.upsert_job_posting(make_posting("saramin_2", "신생게임즈", "2026-07-09 09:00:00"))
+
+        known = self.db_manager.get_companies_seen_before("2026-07-09")
+        self.assertIn("컴투스", known)
+        self.assertNotIn("신생게임즈", known)
+
     def test_delta_analyzer_suspect_sources_hold(self):
         """'성공했지만 0건'인 소스(suspect)는 마감 판정을 보류해 플랩(마감↔부활 반복)을 막는다.
 

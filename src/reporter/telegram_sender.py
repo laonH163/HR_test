@@ -147,7 +147,7 @@ class TelegramSender:
             parts.append(", ".join(s.upper() for s in others))
         return " · ".join(parts)
 
-    def build_daily_briefing_message(self, newly_added, modified_count, closed_count, active_postings, weekly_trend=None, failed_sources=None, zero_platforms=None):
+    def build_daily_briefing_message(self, newly_added, modified_count, closed_count, active_postings, weekly_trend=None, failed_sources=None, zero_platforms=None, known_companies=None):
         """당일 수집된 통계 데이터 및 공고 리스트 기반 가독성 높은 텔레그램 카드 메세지 빌딩 (중복 디듀프리케이션 포함)"""
         KST = ZoneInfo("Asia/Seoul")
         run_date_env = os.getenv('RUN_DATE_STR', '')
@@ -280,12 +280,17 @@ class TelegramSender:
             msg_lines.append("")
 
         # 1. 신규 등록 공고가 있을 때 상단 노출
+        #    처음 보는 회사(전체 이력에 없던 회사)는 🆕 배지 — 게임업계 재무채용 신규 진입 신호
+        known_norm = {normalize_company(c) for c in (known_companies or [])}
         if new_jobs:
             msg_lines.append("<b>✨ 오늘 새로 등록된 신규 채용 정보:</b>")
             for job in new_jobs:
                 title_clean = self._display_title(job).replace("<", "&lt;").replace(">", "&gt;")
                 company_clean = job["company_name"].replace("<", "&lt;").replace(">", "&gt;")
-                msg_lines.append(f"• <b>[{company_clean}]</b> {title_clean}")
+                new_company_badge = ""
+                if known_companies is not None and normalize_company(job["company_name"]) not in known_norm:
+                    new_company_badge = "🆕 "
+                msg_lines.append(f"• {new_company_badge}<b>[{company_clean}]</b> {title_clean}")
 
                 # 멀티 소스 배지/링크 표출 처리 (Milestone 5)
                 links_str = []

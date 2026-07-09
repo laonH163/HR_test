@@ -29,6 +29,25 @@ class TestTelegramReporter(unittest.TestCase):
         self.assertIn("더블유게임즈", text)
         self.assertIn("https://wanted.co.kr/wd/111", text)
 
+    def test_new_company_badge(self):
+        """전체 이력에 없던 회사의 신규 공고에는 🆕 배지, 기존 회사에는 없음."""
+        sender = TelegramSender()
+        os.environ["RUN_DATE_STR"] = "2026-07-09"
+        postings = [
+            {"id": "saramin_1", "source": "saramin", "company_name": "신생게임즈",
+             "title": "재무 담당자", "origin_url": "https://example.com/1", "posted_at": "2026-07-09"},
+            {"id": "saramin_2", "source": "saramin", "company_name": "(주)컴투스",
+             "title": "회계 담당자", "origin_url": "https://example.com/2", "posted_at": "2026-07-09"},
+        ]
+        text = sender.build_daily_briefing_message(
+            2, 0, 0, postings, known_companies=["컴투스", "넥슨"])
+        self.assertIn("🆕 <b>[신생게임즈]</b>", text)
+        self.assertNotIn("🆕 <b>[(주)컴투스]</b>", text)  # 법인표기 달라도 기존 회사로 인식
+
+        # known_companies 미전달(레거시)이면 배지 없음
+        text2 = sender.build_daily_briefing_message(2, 0, 0, postings)
+        self.assertNotIn("🆕", text2)
+
     def test_zero_platform_warning_line(self):
         """'성공했지만 0건' 플랫폼 경고가 브리핑에 노출되는지 — 무음 고장 가시화"""
         sender = TelegramSender()

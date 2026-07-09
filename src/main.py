@@ -267,10 +267,17 @@ def run_scraping_phase():
         except Exception:
             weekly_trend = None
 
+        # 신규 진입사(🆕) 판별용 — 오늘 이전에 이력이 있던 회사 목록 (실패 시 배지 생략)
+        try:
+            known_companies = db_manager.get_companies_seen_before(datetime.now(KST).strftime("%Y-%m-%d"))
+        except Exception:
+            known_companies = None
+
         # 텔레그램 마크다운 메세지 빌딩 (실패 소스·0건 플랫폼 경고 포함)
         briefing_text = telegram.build_daily_briefing_message(
             newly_added, modified_count, closed_count, active_postings, weekly_trend,
-            failed_sources=failed_sources, zero_platforms=zero_platforms
+            failed_sources=failed_sources, zero_platforms=zero_platforms,
+            known_companies=known_companies
         )
 
         # 최종 메시지 봇 발송

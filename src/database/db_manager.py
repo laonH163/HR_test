@@ -239,6 +239,22 @@ class DBManager:
         conn.close()
         return rows
 
+    def get_companies_seen_before(self, cutoff_date):
+        """cutoff_date('YYYY-MM-DD') 이전에 처음 관측된 회사명 목록 — 신규 진입사 판별용.
+
+        상태 불문(CLOSED 포함) 전체 이력 기준: 과거에 한 번이라도 재무 공고를 냈던
+        회사는 '기존 회사'다. first_seen_at('YYYY-MM-DD HH:MM:SS')과의 문자열 비교로
+        cutoff 당일 신규 적재분은 제외된다."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT DISTINCT company_name FROM job_postings WHERE first_seen_at < ?",
+            (cutoff_date,),
+        )
+        companies = [r[0] for r in cursor.fetchall()]
+        conn.close()
+        return companies
+
     def get_recent_scrape_stats(self, days=7):
         """최근 N일 수집 추세 집계(성공 실행 기준). HTML 트렌드 위젯·주간 인사이트용.
 
