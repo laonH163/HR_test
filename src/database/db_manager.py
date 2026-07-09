@@ -91,6 +91,7 @@ class DBManager:
         self._add_column_if_not_exists("job_categories", "preferred_certifications", "TEXT") # 자격증 태그 (JSON)
         self._add_column_if_not_exists("job_categories", "preferred_skills_tags", "TEXT")     # 실무 역량 태그 (JSON)
         self._add_column_if_not_exists("job_postings", "deadline", "TEXT")  # 마감일 YYYY-MM-DD (D-N 배지 환산, 상시채용은 NULL)
+        self._add_column_if_not_exists("scrape_logs", "source_counts", "TEXT")  # 소스별 수집 건수 JSON (수집량 급감 감지용)
 
     def _add_column_if_not_exists(self, table_name, column_name, column_type):
         """기존 테이블에 컬럼이 없을 때 안전하게 ALTER TABLE을 가동하는 마이그레이션 도우미"""
@@ -203,18 +204,45 @@ class DBManager:
         conn.close()
 
     def insert_scrape_log(self, log):
-        """크롤링 실행 이력 저장"""
+        """크롤링 실행 이력 저장 (소스별 수집 건수 JSON 포함 — 급감 감지용)"""
         conn = self.get_connection()
         cursor = conn.cursor()
         cursor.execute("""
-            INSERT INTO scrape_logs (run_date, newly_added, modified_count, closed_count, is_success, error_log)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO scrape_logs (run_date, newly_added, modified_count, closed_count, is_success, error_log, source_counts)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
         """, (
             log["run_date"], log["newly_added"], log["modified_count"],
-            log["closed_count"], log["is_success"], log.get("error_log")
+            log["closed_count"], log["is_success"], log.get("error_log"),
+            json.dumps(log.get("source_counts") or {}, ensure_ascii=False)
         ))
         conn.commit()
         conn.close()
+
+    def get_recent_source_counts(self, runs=7):
+        """최근 성공 실행들의 소스별 수집 건수 이력 — {source: [건수, ...]} (최신순).
+
+        플랫폼 수집량이 평소 대비 급감했는지 판정하는 기준선. source_counts 컬럼이
+        비어 있는 과거 실행은 건너뛴다."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT source_counts FROM scrape_logs
+            WHERE is_success = 1 AND source_counts IS NOT NULL AND source_counts != '{}'
+            ORDER BY run_id DESC LIMIT ?
+            """,
+            (runs,),
+        )
+        history = {}
+        for row in cursor.fetchall():
+            try:
+                counts = json.loads(row["source_counts"])
+            except Exception:
+                continue
+            for source, n in counts.items():
+                history.setdefault(source, []).append(n)
+        conn.close()
+        return history
 
     def get_all_active_postings(self):
         """현재 활성화된 모든 공고 및 매핑된 분석 카테고리 데이터 조회 (HTML 대시보드 렌더링용)"""

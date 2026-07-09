@@ -178,6 +178,23 @@ def run_scraping_phase():
     if zero_platforms:
         print(f"    [WARN] 플랫폼 소스 0건 감지(스크래퍼 점검 필요): {', '.join(zero_platforms)}", file=sys.stderr)
 
+    # 8-4. [수집량 급감 감지] — 오늘 로그를 적재하기 전의 이력(=어제까지)과 비교.
+    #      플랫폼이 7일 평균 대비 30% 미만이면 검색 열화 의심(서서히 죽는 소스 조기 발견).
+    #      0건은 별도의 '0건 플랫폼' 경고가 담당하므로 여기서 제외한다.
+    source_drops = {}
+    try:
+        history = db_manager.get_recent_source_counts(7)
+        for s in platform_sources:
+            past = history.get(s, [])
+            if len(past) >= 3:
+                avg = sum(past) / len(past)
+                today_n = source_counts.get(s, 0)
+                if avg >= 3 and 0 < today_n < avg * 0.3:
+                    source_drops[s] = {"today": today_n, "avg": avg}
+                    print(f"    [WARN] {s} 수집량 급감: 오늘 {today_n}건 (최근 평균 {avg:.1f}건)", file=sys.stderr)
+    except Exception as e:
+        print(f"    [WARN] 수집량 추세 비교 실패: {e}", file=sys.stderr)
+
     # 9. DB 적재 및 정밀 하이브리드 분류
     print("\n[-] SQLite 데이터베이스 마스터 적재 및 정밀 분류 가동 중...")
     newly_added = 0
@@ -209,7 +226,8 @@ def run_scraping_phase():
     try:
         if today_ids:
             closed_count, closed_details = analyzer.analyze_closed_postings(
-                today_ids, successful_sources, suspect_sources=set(zero_platforms))
+                today_ids, successful_sources, suspect_sources=set(zero_platforms),
+                collected_counts=dict(source_counts))
             for closed in closed_details:
                 print(f"    -> 마감 감지 완료: [{closed['company_name']}] {closed['title']}")
         print(f"    -> 마감 공고 처리 결과: 총 {closed_count} 건 종료 감지")
@@ -230,7 +248,8 @@ def run_scraping_phase():
             "modified_count": modified_count,
             "closed_count": closed_count,
             "is_success": 1 if successful_sources else 0,
-            "error_log": "; ".join(error_parts) if error_parts else None
+            "error_log": "; ".join(error_parts) if error_parts else None,
+            "source_counts": dict(source_counts)  # 소스별 수집 건수 (급감 감지 기준선)
         }
         db_manager.insert_scrape_log(log_entry)
         print("[OK] 수집 이력 로그 적재 완료.")
@@ -273,11 +292,13 @@ def run_scraping_phase():
         except Exception:
             known_companies = None
 
-        # 텔레그램 마크다운 메세지 빌딩 (실패 소스·0건 플랫폼 경고 포함)
+        # 텔레그램 마크다운 메세지 빌딩 (실패·0건·일괄소멸·급감 경고 포함)
         briefing_text = telegram.build_daily_briefing_message(
             newly_added, modified_count, closed_count, active_postings, weekly_trend,
             failed_sources=failed_sources, zero_platforms=zero_platforms,
-            known_companies=known_companies
+            known_companies=known_companies,
+            mass_close_held=getattr(analyzer, "last_mass_close_held", []),
+            source_drops=source_drops
         )
 
         # 최종 메시지 봇 발송

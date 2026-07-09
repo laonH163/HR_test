@@ -48,6 +48,25 @@ class TestTelegramReporter(unittest.TestCase):
         text2 = sender.build_daily_briefing_message(2, 0, 0, postings)
         self.assertNotIn("🆕", text2)
 
+    def test_mass_close_and_drop_warning_lines(self):
+        """일괄 소멸·수집량 급감 경고 라인 노출 (미전달 시 미노출)"""
+        sender = TelegramSender()
+        os.environ["RUN_DATE_STR"] = "2026-07-09"
+
+        text = sender.build_daily_briefing_message(
+            0, 0, 0, [],
+            mass_close_held=["com2us", "webzen"],
+            source_drops={"saramin": {"today": 2, "avg": 9.4}},
+        )
+        self.assertIn("기존 공고 일괄 소멸 감지", text)
+        self.assertIn("COM2US · WEBZEN", text)
+        self.assertIn("수집량 급감", text)
+        self.assertIn("SARAMIN 2건(평소 9건)", text)
+
+        clean = sender.build_daily_briefing_message(0, 0, 0, [])
+        self.assertNotIn("일괄 소멸", clean)
+        self.assertNotIn("수집량 급감", clean)
+
     def test_zero_platform_warning_line(self):
         """'성공했지만 0건' 플랫폼 경고가 브리핑에 노출되는지 — 무음 고장 가시화"""
         sender = TelegramSender()

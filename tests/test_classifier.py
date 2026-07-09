@@ -295,5 +295,74 @@ class TestClassifierAndDelta(unittest.TestCase):
         self.assertEqual(cursor.fetchone()["status"], "CLOSED")
         conn.close()
 
+    def test_mass_close_guard_holds_adapter_wipeout(self):
+        """기업 어댑터의 기존 공고(2건 이상)가 오늘 전부 미수집이면 개편 의심으로 마감 보류.
+        활성 1건짜리 소스의 정상 마감은 그대로 진행된다."""
+        def make_posting(job_id, source):
+            return {
+                "id": job_id, "source": source, "company_name": "테스트",
+                "title": "재무 담당자", "origin_url": "https://example.com",
+                "location": "서울", "posted_at": "2026-07-08", "status": "ACTIVE",
+                "raw_html": "본문", "first_seen_at": "2026-07-08 09:00:00",
+                "last_updated_at": "2026-07-08 09:00:00",
+            }
+        # com2us 2건(전멸 → 보류 대상), krafton 1건(정상 마감 대상)
+        for jid, src in [("com2us_1", "com2us"), ("com2us_2", "com2us"), ("krafton_1", "krafton")]:
+            self.db_manager.upsert_job_posting(make_posting(jid, src))
+
+        today_ids = {"saramin_1", "saramin_2", "saramin_3"}
+        closed_count, closed_details = self.analyzer.analyze_closed_postings(
+            today_ids,
+            successful_sources={"com2us", "krafton", "saramin"},
+            suspect_sources=set(),
+            collected_counts={"com2us": 0, "krafton": 0, "saramin": 3},
+        )
+
+        self.assertEqual(self.analyzer.last_mass_close_held, ["com2us"])
+        self.assertEqual(closed_count, 1)  # krafton_1만 마감
+        conn = self.db_manager.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT status FROM job_postings WHERE id = 'com2us_1'")
+        self.assertEqual(cursor.fetchone()["status"], "ACTIVE")
+        cursor.execute("SELECT status FROM job_postings WHERE id = 'krafton_1'")
+        self.assertEqual(cursor.fetchone()["status"], "CLOSED")
+        conn.close()
+
+    def test_mass_close_guard_family_wide_wipeout(self):
+        """4개 소스가 같은 날 동시 전멸하면(도메인 단위 개편 의심) 1건짜리 소스도 전부 보류."""
+        def make_posting(job_id, source):
+            return {
+                "id": job_id, "source": source, "company_name": "테스트",
+                "title": "재무 담당자", "origin_url": "https://example.com",
+                "location": "서울", "posted_at": "2026-07-08", "status": "ACTIVE",
+                "raw_html": "본문", "first_seen_at": "2026-07-08 09:00:00",
+                "last_updated_at": "2026-07-08 09:00:00",
+            }
+        sources = ["nexon", "ncsoft", "webzen", "wemade"]
+        for i, src in enumerate(sources):
+            self.db_manager.upsert_job_posting(make_posting(f"{src}_{i}", src))
+
+        today_ids = {"saramin_1", "saramin_2", "saramin_3"}
+        closed_count, _ = self.analyzer.analyze_closed_postings(
+            today_ids,
+            successful_sources=set(sources) | {"saramin"},
+            suspect_sources=set(),
+            collected_counts={s: 0 for s in sources} | {"saramin": 3},
+        )
+
+        self.assertEqual(closed_count, 0)  # 전부 보류
+        self.assertEqual(self.analyzer.last_mass_close_held, sorted(sources))
+
+    def test_source_counts_roundtrip(self):
+        """scrape_logs의 소스별 수집 건수 JSON 저장·조회 (급감 감지 기준선)."""
+        self.db_manager.insert_scrape_log({
+            "run_date": "2026-07-09", "newly_added": 1, "modified_count": 0,
+            "closed_count": 0, "is_success": 1, "error_log": None,
+            "source_counts": {"saramin": 9, "jobkorea": 13},
+        })
+        history = self.db_manager.get_recent_source_counts(7)
+        self.assertEqual(history.get("saramin"), [9])
+        self.assertEqual(history.get("jobkorea"), [13])
+
 if __name__ == '__main__':
     unittest.main()

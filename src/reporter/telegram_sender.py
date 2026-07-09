@@ -147,7 +147,7 @@ class TelegramSender:
             parts.append(", ".join(s.upper() for s in others))
         return " · ".join(parts)
 
-    def build_daily_briefing_message(self, newly_added, modified_count, closed_count, active_postings, weekly_trend=None, failed_sources=None, zero_platforms=None, known_companies=None):
+    def build_daily_briefing_message(self, newly_added, modified_count, closed_count, active_postings, weekly_trend=None, failed_sources=None, zero_platforms=None, known_companies=None, mass_close_held=None, source_drops=None):
         """당일 수집된 통계 데이터 및 공고 리스트 기반 가독성 높은 텔레그램 카드 메세지 빌딩 (중복 디듀프리케이션 포함)"""
         KST = ZoneInfo("Asia/Seoul")
         run_date_env = os.getenv('RUN_DATE_STR', '')
@@ -240,6 +240,16 @@ class TelegramSender:
         if zero_platforms:
             zp = " · ".join(str(s).upper() for s in sorted(zero_platforms))
             msg_lines.append(f"⚠️ 수집 0건 플랫폼: <b>{zp}</b> — 검색 오동작 가능성, 해당 소스 마감 판정은 보류됩니다")
+
+        # 기업 어댑터 일괄 소멸 경고 — 기존 공고 다수가 한 번에 사라지면 사이트 개편 의심
+        if mass_close_held:
+            mh = " · ".join(str(s).upper() for s in sorted(mass_close_held))
+            msg_lines.append(f"⚠️ 기존 공고 일괄 소멸 감지: <b>{mh}</b> — 사이트 개편 의심, 마감 보류 중 (이 경고가 이틀 이상 반복되면 점검 필요)")
+
+        # 플랫폼 수집량 급감 경고 — 서서히 죽어가는 소스 조기 발견 (7일 평균 대비 30% 미만)
+        if source_drops:
+            parts = [f"{str(s).upper()} {v['today']}건(평소 {v['avg']:.0f}건)" for s, v in sorted(source_drops.items())]
+            msg_lines.append(f"📉 수집량 급감: <b>{' · '.join(parts)}</b> — 검색 열화 가능성, 지속되면 점검 필요")
 
         # 최근 7일 추세(시계열) 한 줄 — 전달된 경우에만 노출(테스트 시그니처 호환을 위해 선택적)
         if weekly_trend and weekly_trend.get("days"):
