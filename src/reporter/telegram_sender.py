@@ -229,28 +229,6 @@ class TelegramSender:
             f"• 채용 종료(마감) 공고: <b>{closed_count} 건</b>",
         ]
 
-        # 수집 실패 소스 경고 — 무음 실패 방지. 실패 소스의 기존 공고는 마감 처리 없이 보존된다.
-        # CI에서는 새 러너(새 IP) 재시도까지 거친 뒤의 최종 실패만 여기 도달한다.
-        if failed_sources:
-            fs = self._summarize_failed_sources(failed_sources)
-            msg_lines.append(f"⚠️ 수집 실패: <b>{fs}</b> — 기존 공고는 보존되며 다음 실행에서 재수집됩니다")
-
-        # '성공했지만 0건' 플랫폼 경고 — 예외 없이 빈손인 무음 고장을 가시화한다.
-        # (실측: 원티드가 상세 DOM 개편으로 한 달간 0건이었는데 error_log에만 남아 아무도 몰랐음)
-        if zero_platforms:
-            zp = " · ".join(str(s).upper() for s in sorted(zero_platforms))
-            msg_lines.append(f"⚠️ 수집 0건 플랫폼: <b>{zp}</b> — 검색 오동작 가능성, 해당 소스 마감 판정은 보류됩니다")
-
-        # 기업 어댑터 일괄 소멸 경고 — 기존 공고 다수가 한 번에 사라지면 사이트 개편 의심
-        if mass_close_held:
-            mh = " · ".join(str(s).upper() for s in sorted(mass_close_held))
-            msg_lines.append(f"⚠️ 기존 공고 일괄 소멸 감지: <b>{mh}</b> — 사이트 개편 의심, 마감 보류 중 (이 경고가 이틀 이상 반복되면 점검 필요)")
-
-        # 플랫폼 수집량 급감 경고 — 서서히 죽어가는 소스 조기 발견 (7일 평균 대비 30% 미만)
-        if source_drops:
-            parts = [f"{str(s).upper()} {v['today']}건(평소 {v['avg']:.0f}건)" for s, v in sorted(source_drops.items())]
-            msg_lines.append(f"📉 수집량 급감: <b>{' · '.join(parts)}</b> — 검색 열화 가능성, 지속되면 점검 필요")
-
         # 최근 7일 추세(시계열) 한 줄 — 전달된 경우에만 노출(테스트 시그니처 호환을 위해 선택적)
         if weekly_trend and weekly_trend.get("days"):
             msg_lines.append(
@@ -334,6 +312,32 @@ class TelegramSender:
                 msg_lines.append("")
 
         msg_lines.append("━━━━━━━━━━━━━━━━━━━━")
+
+        # 🩺 수집 상태 섹션 — 경고는 메인 콘텐츠(마감임박·신규·기존)를 해치지 않도록
+        # 최하단에 컴팩트하게 모은다. 무음 실패 방지가 목적이므로 정상인 날도 한 줄로 확인시켜 준다.
+        # (실측: 원티드가 한 달간 0건이었는데 error_log에만 남아 아무도 몰랐던 사고의 재발 방지)
+        health_lines = []
+        if failed_sources:
+            # CI에서는 새 러너(새 IP) 재시도까지 거친 뒤의 최종 실패만 여기 도달한다.
+            health_lines.append(f" • ⚠️ 접속 실패: <b>{self._summarize_failed_sources(failed_sources)}</b>")
+        if zero_platforms:
+            zp = " · ".join(str(s).upper() for s in sorted(zero_platforms))
+            health_lines.append(f" • ⚠️ 검색 0건: <b>{zp}</b>")
+        if mass_close_held:
+            mh = " · ".join(str(s).upper() for s in sorted(mass_close_held))
+            health_lines.append(f" • ⚠️ 공고 일괄 소멸 의심: <b>{mh}</b>")
+        if source_drops:
+            parts = [f"{str(s).upper()} {v['today']}건(평소 {v['avg']:.0f}건)" for s, v in sorted(source_drops.items())]
+            health_lines.append(f" • 📉 수집량 급감: <b>{' · '.join(parts)}</b>")
+
+        if health_lines:
+            msg_lines.append("🩺 <b>수집 상태 점검:</b>")
+            msg_lines.extend(health_lines)
+            msg_lines.append("<i>※ 해당 소스는 마감 보류로 보호 중이라 데이터는 안전합니다. 같은 경고가 이틀 이상 반복되면 점검이 필요합니다.</i>")
+        else:
+            msg_lines.append("🩺 수집 상태: 전 소스 정상")
+        msg_lines.append("")
+
         msg_lines.append("💻 상세 필터 및 전체 누적 공고 조회가 필요하신 경우, 아래 실시간 대시보드 링크를 터치해 주세요.")
         msg_lines.append("👉 <a href='https://laonH163.github.io/HR_test/'>[실시간 웹 대시보드] 원클릭으로 바로가기</a>")
 

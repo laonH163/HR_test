@@ -58,14 +58,19 @@ class TestTelegramReporter(unittest.TestCase):
             mass_close_held=["com2us", "webzen"],
             source_drops={"saramin": {"today": 2, "avg": 9.4}},
         )
-        self.assertIn("기존 공고 일괄 소멸 감지", text)
+        self.assertIn("수집 상태 점검", text)
+        self.assertIn("공고 일괄 소멸 의심", text)
         self.assertIn("COM2US · WEBZEN", text)
         self.assertIn("수집량 급감", text)
         self.assertIn("SARAMIN 2건(평소 9건)", text)
+        # 경고는 메인 콘텐츠를 해치지 않도록 대시보드 링크 직전(최하단)에 위치
+        self.assertLess(text.index("오늘 감지된 핵심 델타 통계"), text.index("수집 상태 점검"))
+        self.assertLess(text.index("수집 상태 점검"), text.index("실시간 웹 대시보드"))
 
         clean = sender.build_daily_briefing_message(0, 0, 0, [])
         self.assertNotIn("일괄 소멸", clean)
         self.assertNotIn("수집량 급감", clean)
+        self.assertIn("수집 상태: 전 소스 정상", clean)  # 정상인 날은 한 줄 확인
 
     def test_zero_platform_warning_line(self):
         """'성공했지만 0건' 플랫폼 경고가 브리핑에 노출되는지 — 무음 고장 가시화"""
@@ -75,12 +80,12 @@ class TestTelegramReporter(unittest.TestCase):
         text = sender.build_daily_briefing_message(
             0, 0, 0, [], zero_platforms=["wanted", "gamejob"]
         )
-        self.assertIn("수집 0건 플랫폼", text)
+        self.assertIn("검색 0건", text)
         self.assertIn("GAMEJOB · WANTED", text)
 
         # 0건 플랫폼이 없으면 경고 라인도 없어야 함
         clean_text = sender.build_daily_briefing_message(0, 0, 0, [], zero_platforms=[])
-        self.assertNotIn("수집 0건 플랫폼", clean_text)
+        self.assertNotIn("검색 0건", clean_text)
 
 if __name__ == '__main__':
     unittest.main()
