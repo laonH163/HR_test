@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 
 KST = ZoneInfo("Asia/Seoul")
 from src.scraper import filters
+from src.utils.dateparse import parse_deadline_badge
 from src.utils.http import make_session
 
 class SaraminScraper:
@@ -99,6 +100,10 @@ class SaraminScraper:
                     location_el = item.select_one(".job_condition span:nth-child(1)") or item.select_one(".job_condition span")
                     location = location_el.text.strip() if location_el else "서울"
 
+                    # 목록 마감 배지("~ 07/31(금)"·"D-N"·"오늘마감") → 절대 마감일. 상시채용은 None
+                    date_el = item.select_one(".job_date .date") or item.select_one(".job_date")
+                    deadline = parse_deadline_badge(date_el.get_text(" ", strip=True) if date_el else "")
+
                     posting = {
                         "id": job_id,
                         "source": "saramin",
@@ -110,7 +115,8 @@ class SaraminScraper:
                         "status": "ACTIVE",
                         "raw_html": desc_text,
                         "first_seen_at": datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S"),
-                        "last_updated_at": datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
+                        "last_updated_at": datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S"),
+                        "deadline": deadline
                     }
                     results.append(posting)
                     count += 1

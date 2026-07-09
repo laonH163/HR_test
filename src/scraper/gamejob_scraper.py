@@ -3,16 +3,13 @@ from bs4 import BeautifulSoup
 import re
 import random
 import time
-from datetime import datetime, date, timedelta
+from datetime import datetime
 from zoneinfo import ZoneInfo
 
 KST = ZoneInfo("Asia/Seoul")
 from src.scraper import filters
+from src.utils.dateparse import parse_deadline_badge
 from src.utils.http import make_session
-
-# 목록 행의 마감 표기: "~07/31" (절대일) 또는 "D-3" (카운트다운). "상시"/"채용시"는 마감일 없음.
-_ROW_DEADLINE_ABS_RE = re.compile(r"~\s*(\d{1,2})/(\d{1,2})")
-_ROW_DEADLINE_DDAY_RE = re.compile(r"\bD-(\d+)\b")
 
 
 class GameJobScraper:
@@ -71,31 +68,8 @@ class GameJobScraper:
 
     @staticmethod
     def _parse_row_deadline(row_text, today=None):
-        """목록 행 텍스트에서 마감일을 'YYYY-MM-DD'로 환산. 상시/채용시 등은 None.
-
-        "~07/31"은 연도가 없어 오늘 기준으로 추론한다(연말→연초로 넘어가는 마감은 내년으로)."""
-        if today is None:
-            today = datetime.now(KST).date()
-
-        m = _ROW_DEADLINE_DDAY_RE.search(row_text or "")
-        if m:
-            return (today + timedelta(days=int(m.group(1)))).strftime("%Y-%m-%d")
-
-        m = _ROW_DEADLINE_ABS_RE.search(row_text or "")
-        if not m:
-            return None
-        month, day = int(m.group(1)), int(m.group(2))
-        try:
-            d = date(today.year, month, day)
-        except ValueError:
-            return None
-        # 오늘이 연말인데 마감이 01/15처럼 크게 과거로 계산되면 내년 마감으로 해석
-        if (d - today).days < -300:
-            try:
-                d = date(today.year + 1, month, day)
-            except ValueError:
-                return None
-        return d.strftime("%Y-%m-%d")
+        """목록 행 텍스트의 마감 배지("~MM/DD"·"D-N"·상시 등) 환산 — 공용 파서 위임"""
+        return parse_deadline_badge(row_text, today)
 
     @classmethod
     def _parse_search_rows(cls, fragment_html):
