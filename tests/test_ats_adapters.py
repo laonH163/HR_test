@@ -157,3 +157,40 @@ class TestJobKoreaClosedFilter(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class TestGreetingHRDetailEnrichment(unittest.TestCase):
+    """greetinghr 마감일(dueDate)·상세 본문 보강 — 2026-07-09 실측 기반 회귀"""
+
+    def test_due_date_converted_to_deadline(self):
+        from datetime import date
+        from src.scraper.ats.api_adapters import GreetingHRAdapter
+        today = date(2026, 7, 9)
+        # KST 자정 직전(UTC 14:59:59Z) 표기 → 날짜부 그대로
+        self.assertEqual(
+            GreetingHRAdapter._deadline_from_due("2026-08-02T14:59:59Z", today), "2026-08-02")
+
+    def test_far_future_due_date_is_open_ended(self):
+        from datetime import date
+        from src.scraper.ats.api_adapters import GreetingHRAdapter
+        today = date(2026, 7, 9)
+        # '2033-01-31'(실측: 카카오게임즈 상시 오프닝)은 사실상 상시채용 → None
+        self.assertIsNone(GreetingHRAdapter._deadline_from_due("2033-01-31T14:59:59Z", today))
+        self.assertIsNone(GreetingHRAdapter._deadline_from_due(None, today))
+        self.assertIsNone(GreetingHRAdapter._deadline_from_due("잘못된값", today))
+
+    def test_body_extracted_from_largest_content_block(self):
+        from src.scraper.ats.api_adapters import GreetingHRAdapter
+        html_page = (
+            '<html><body>'
+            '<div class="NavContent_x">메뉴</div>'
+            '<div class="OpeningContent_abc123">' + ('담당업무: 연결결산 및 공시. ' * 20) + '</div>'
+            '</body></html>'
+        )
+        body = GreetingHRAdapter._extract_body_from_html(html_page)
+        self.assertIn("연결결산", body)
+        self.assertGreater(len(body), 80)
+
+    def test_body_extraction_fails_closed_on_unknown_markup(self):
+        from src.scraper.ats.api_adapters import GreetingHRAdapter
+        self.assertEqual(GreetingHRAdapter._extract_body_from_html("<html><body>완전 다른 구조</body></html>"), "")
+

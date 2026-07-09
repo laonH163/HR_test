@@ -50,6 +50,22 @@ class PearlAbyssAdapter(BaseATSAdapter):
 
             job_id = f"{self.source}_{opening_no}"
             url = (self.BASE + href) if href.startswith("/") else href
-            # 본문 상세는 후속 보강 과제(현재 재무 공고 0건이라 제목 기반으로 시작)
-            results.append(self.build_posting(job_id, title, url, title, None, "경기 과천"))
+            body = self._fetch_detail_body(url)
+            results.append(self.build_posting(job_id, title, url, body or title, None, "경기 과천"))
         return results
+
+    def _fetch_detail_body(self, url):
+        """상세 페이지 JD 본문 (분류 정확도용). 정적 SSR이라 requests로 충분
+        (2026-07-09 실측: article 요소에 960자 본문). 실패 시 빈 문자열."""
+        try:
+            res = self.session.get(url, timeout=15)
+            if res.status_code != 200:
+                return ""
+            soup = BeautifulSoup(res.text, "html.parser")
+            main = soup.select_one("article") or soup.select_one("main")
+            if not main:
+                return ""
+            text = main.get_text("\n").strip()
+            return text if len(text) > 80 else ""
+        except Exception:
+            return ""

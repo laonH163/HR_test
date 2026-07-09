@@ -9,10 +9,12 @@
 - greetinghr 카카오게임즈(workspace=7144): 헤더로 workspace id 해석 가능
 """
 import html
+from datetime import date
 
 from bs4 import BeautifulSoup
 
 from src.scraper.ats.base import BaseATSAdapter
+from src.utils.timeutil import now_kst
 
 
 def _html_to_text(raw):
@@ -79,7 +81,9 @@ class LeverAdapter(BaseATSAdapter):
 class GreetingHRAdapter(BaseATSAdapter):
     """greetinghr(그리팅) ATS. 예: 카카오게임즈(subdomain='kakaogamesrecruit', source='kakaogames').
 
-    공고목록 API는 제목만 제공하므로 본문 분류는 제목 기준이다(상세 본문 보강은 후속 과제).
+    공고목록 API가 제목·게시일·마감일(dueDate)을 제공하고, 공고 상세 페이지는
+    SSR이라 requests만으로 JD 본문 확보가 가능하다(2026-07-09 실측: Content 블록
+    2,600자). 재무 필터를 통과한 공고만 상세를 받아 요청 수를 최소화한다.
     workspace_id를 모르면 채용 도메인 HEAD 응답 헤더/쿠키에서 동적으로 해석한다.
     """
 
@@ -104,6 +108,49 @@ class GreetingHRAdapter(BaseATSAdapter):
             self.workspace_id = None
         return self.workspace_id
 
+    @staticmethod
+    def _deadline_from_due(due_date, today=None):
+        """목록 dueDate('2026-08-02T14:59:59Z' — KST 자정 직전의 UTC 표기)를 'YYYY-MM-DD'로.
+
+        '2033-01-31'처럼 1년 넘게 남은 날짜는 사실상 상시채용 표기라 None으로 둔다
+        (마감임박 배지·알림 계산을 오염시키지 않도록)."""
+        if not due_date or len(due_date) < 10:
+            return None
+        day = due_date[:10]
+        try:
+            d = date.fromisoformat(day)
+        except ValueError:
+            return None
+        base = today or now_kst().date()
+        if (d - base).days > 365:
+            return None
+        return day
+
+    @staticmethod
+    def _extract_body_from_html(page_html):
+        """상세(SSR) 페이지에서 JD 본문 텍스트 추출. 마크업 미인식 시 빈 문자열.
+
+        본문은 'OpeningContent_...' 류의 Content 클래스 블록 중 가장 긴 것에 있다
+        (클래스 해시가 빌드마다 바뀌므로 부분 일치로 잡는다)."""
+        soup = BeautifulSoup(page_html, "html.parser")
+        blocks = soup.select("[class*='Content']")
+        if not blocks:
+            return ""
+        best = max(blocks, key=lambda el: len(el.get_text(strip=True)))
+        text = best.get_text("\n").strip()
+        # 빈 껍데기/네비 블록 방어 — 본문이라기엔 너무 짧으면 버린다
+        return text if len(text) > 80 else ""
+
+    def _fetch_opening_body(self, origin_url):
+        """공고 상세 페이지 본문 (분류 정확도용). 실패해도 수집은 계속(빈 문자열)."""
+        try:
+            res = self.session.get(origin_url, timeout=15)
+            if res.status_code != 200:
+                return ""
+            return self._extract_body_from_html(res.text)
+        except Exception:
+            return ""
+
     def fetch(self):
         results = []
         wid = self._resolve_workspace_id()
@@ -120,5 +167,7 @@ class GreetingHRAdapter(BaseATSAdapter):
             job_id = f"{self.source}_{opening_id}"
             origin = f"https://{self.subdomain}.career.greetinghr.com/ko/o/{opening_id}"
             posted = (job.get("openDate") or "")[:10] or None
-            results.append(self.build_posting(job_id, title, origin, title, posted, None))
+            deadline = self._deadline_from_due(job.get("dueDate"))
+            body = self._fetch_opening_body(origin)
+            results.append(self.build_posting(job_id, title, origin, body or title, posted, None, deadline=deadline))
         return results
