@@ -20,8 +20,8 @@ from src.analyzer.delta_analyzer import DeltaAnalyzer
 from src.reporter.html_generator import HTMLGenerator
 from src.reporter.telegram_sender import TelegramSender
 
-# 잡코리아 공고 상세 URL에서 GI번호(공고 고유번호) 추출용
-JOBKOREA_GI_RE = re.compile(r"jobkorea\.co\.kr/Recruit/GI_Read/(\d+)")
+# 잡코리아 공고 상세 URL에서 GI번호(공고 고유번호) 추출용 — 정의는 jobkorea_detail이 원본
+from src.scraper.jobkorea_detail import GI_READ_RE as JOBKOREA_GI_RE
 
 
 def dedupe_jobkorea_gi(postings):
@@ -167,6 +167,17 @@ def run_scraping_phase():
     # 8-2c. [잡코리아 GI 중복 병합] — 검색·기업페이지 이중 수집분을 DB 적재 전에 정리
     all_postings = dedupe_jobkorea_gi(all_postings)
 
+    # 8-2d. [잡코리아 GI 본문 보강] — 상세요강 iframe(SSR)에서 JD 텍스트 확보.
+    #       제목만 수집된 GI 공고의 자격요건·우대사항을 채워 분류 정확도를 올린다.
+    #       실패해도 치명적이지 않음(제목 기반 현행 유지).
+    try:
+        from src.scraper.jobkorea_detail import enrich_gi_postings
+        enriched_count = enrich_gi_postings(all_postings, db_manager)
+        if enriched_count:
+            print(f"    [ENRICH] 잡코리아 GI 상세요강 신규 확보: {enriched_count}건")
+    except Exception as e:
+        print(f"    [WARN] GI 본문 보강 실패(제목 기반으로 진행): {e}", file=sys.stderr)
+
     # 8-3. [헬스체크] 소스별 수집 건수 점검 — 항상 공고가 있는 플랫폼이 0건이면 스크래퍼 점검 신호.
     #   (게임사 자체수집 0건은 단순 '공고 없음'일 수 있어 경고 대상에서 제외)
     from collections import Counter
@@ -200,6 +211,7 @@ def run_scraping_phase():
     newly_added = 0
     modified_count = 0
     today_ids = set()
+    deadline_changes = []  # 마감일 연장/단축 상세 (텔레그램 '마감일 변경' 섹션용)
 
     for posting in all_postings:
         try:
@@ -210,6 +222,16 @@ def run_scraping_phase():
                 newly_added += 1
             elif is_modified:
                 modified_count += 1
+                # 마감일이 실제로 바뀐 공고(연장/단축)는 변경 전후를 브리핑에 노출
+                change = db_manager.last_change_details or {}
+                if change.get("deadline_from"):
+                    deadline_changes.append({
+                        "company_name": posting["company_name"],
+                        "title": posting["title"],
+                        "origin_url": posting["origin_url"],
+                        "old": change["deadline_from"],
+                        "new": change["deadline_to"],
+                    })
 
             # 실시간 정밀 분류 및 categories 테이블 적재
             category_data = classifier.analyze_and_classify(posting)
@@ -256,10 +278,16 @@ def run_scraping_phase():
     except Exception as e:
         print(f"    [ERR] 수집 로그 적재 실패: {e}", file=sys.stderr)
 
+    # 11-b. 재공고(🔁) 판별용 CLOSED 이력 — 대시보드·텔레그램이 공유 (쿼리 1회)
+    try:
+        closed_history = db_manager.get_closed_key_history()
+    except Exception:
+        closed_history = None
+
     # 12. [Milestone 3] HTML 정적 대시보드 리포트 생성 가동
     print("\n[-] HTML 대시보드 생성기(Milestone 3) 가동 중...")
     try:
-        total_html_jobs = reporter.generate_dashboard()
+        total_html_jobs = reporter.generate_dashboard(closed_history=closed_history)
         print(f"    -> HTML 대시보드 빌드 성공: 총 {total_html_jobs}건 활성 적재")
     except Exception as e:
         print(f"    [ERR] HTML 대시보드 생성 실패: {e}", file=sys.stderr)
@@ -298,7 +326,9 @@ def run_scraping_phase():
             failed_sources=failed_sources, zero_platforms=zero_platforms,
             known_companies=known_companies,
             mass_close_held=getattr(analyzer, "last_mass_close_held", []),
-            source_drops=source_drops
+            source_drops=source_drops,
+            deadline_changes=deadline_changes,
+            closed_history=closed_history
         )
 
         # 최종 메시지 봇 발송

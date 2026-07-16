@@ -151,8 +151,11 @@ class HybridClassificationEngine:
         unique_tools = list(set(tools))
         return ", ".join(unique_tools) if unique_tools else "EXCEL"
 
-    def generate_ai_summary(self, title, company, work_type, exp_min, exp_max, tools):
-        """분석된 속성 정보들을 종합하여 사용자가 한눈에 이해할 수 있는 3줄 한글 요약 생성"""
+    def generate_ai_summary(self, title, company, work_type, exp_min, exp_max, tools, category="재무/회계"):
+        """분석된 속성 정보들을 종합하여 사용자가 한눈에 이해할 수 있는 3줄 한글 요약 생성.
+
+        category: 직무 대분류(회계/세무/재무·자금/내부통제) — 과거 '재무실' 고정 표기가
+        세무·자금 공고까지 재무실로 오표기하던 것을 실제 분류값으로 교정."""
         if exp_min == 0 and exp_max == 1:
             exp_str = "신입 지원 가능"
         elif exp_min > 0 and exp_max:
@@ -163,7 +166,7 @@ class HybridClassificationEngine:
             exp_str = "경력 무관 (신입 지원 가능)"
 
         summary_lines = [
-            f"1. {company} 재무실 - '{title}' 채용 공고",
+            f"1. {company} {category} 직무 - '{title}' 채용 공고",
             f"2. 근무 요건: {work_type} | {exp_str}",
             f"3. 요구 직무 도구 및 핵심 역량: {tools if tools else 'EXCEL 중심업무'}"
         ]
@@ -255,8 +258,8 @@ class HybridClassificationEngine:
         # 6. 회사 메타 프리셋 정보 조회 (법인 표기 정규화 + 부분 매칭 보강)
         preset = self._lookup_company_meta(company)
 
-        # 7. 3줄 요약 생성
-        ai_summary = self.generate_ai_summary(title, company, work_type, exp_min, exp_max, tools)
+        # 7. 3줄 요약 생성 (직무 대분류를 반영 — '재무실' 고정 표기 오류 교정)
+        ai_summary = self.generate_ai_summary(title, company, work_type, exp_min, exp_max, tools, category=primary_category)
 
         # 8. 핵심 자격요건 리스트화 (본문 라인 중 대시나 이머지 패턴 기반 리스트 파싱)
         key_requirements = []

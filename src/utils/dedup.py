@@ -8,6 +8,13 @@
 동일 로직이 JS로 미러링되어 있다. 여기를 바꾸면 템플릿도 함께 맞출 것.
 """
 import re
+from datetime import datetime
+
+# 재공고(🔁) 인정 최소 공백(일) — 마감 후 이 기간 이상 지나 재등장해야 배지를 붙인다.
+# 하루 이틀 내 재등장(수집 플랩·잡코리아 gno 갱신·플랫폼 이동)은 '장기 미충원' 신호가
+# 아니므로 제외. 같은 실행 안에서 구공고 마감+신공고 등장이 동시에 잡히는 경우도
+# 보수적으로 미표시된다(의도된 트레이드오프 — 배지는 고신뢰 신호만).
+MIN_REPOST_GAP_DAYS = 2
 
 # 플랫폼 검색 소스 — 이 외의 소스(기업페이지 어댑터·자체 채용페이지)는 모두 '공식'으로 간주
 PLATFORM_SOURCES = {"wanted", "saramin", "jobkorea", "gamejob"}
@@ -27,6 +34,47 @@ def normalize_company(name):
 def source_rank(source):
     """대표 카드 우선순위 — 공식(기업 어댑터·자체 채용페이지)=0, 플랫폼 검색=1"""
     return 1 if (source or "").lower() in PLATFORM_SOURCES else 0
+
+
+def compute_repost_flags(active_postings, closed_history):
+    """재공고(🔁) 판별 — {content_key: 마지막 마감 관측일 'YYYY-MM-DD'} 반환.
+
+    규칙: 현재 활성 그룹(같은 content_key의 활성 공고들)의 **최초 관측 시각**이
+    같은 키의 **마지막 CLOSED 관측 시각**보다 뒤일 때만 재공고로 본다.
+    → 한쪽 소스 행만 닫혔는데 다른 소스 행이 계속 활성이던 이력(플랩·좀비 CLOSED)은
+      그룹 최초 관측이 마감 이전이므로 자연히 걸러진다.
+    벤치마킹 근거: hiring.cafe 운영기 — 재게시(repost)는 장기 미충원/유령공고의 최강 신호.
+
+    입력은 dict 리스트여야 한다(sqlite3.Row는 .get이 없음 — 호출부에서 dict 변환).
+    ※ 결과 플래그는 데이터로 주입되므로 대시보드 JS에 로직 미러링이 필요 없다.
+    """
+    latest_closed = {}
+    for row in closed_history or []:
+        key = content_key(row.get("company_name"), row.get("title"))
+        closed_at = row.get("closed_at") or ""
+        if closed_at and closed_at > latest_closed.get(key, ""):
+            latest_closed[key] = closed_at
+
+    group_first_seen = {}
+    for job in active_postings or []:
+        key = content_key(job.get("company_name"), job.get("title"))
+        first_seen = job.get("first_seen_at") or ""
+        if first_seen and (key not in group_first_seen or first_seen < group_first_seen[key]):
+            group_first_seen[key] = first_seen
+
+    flags = {}
+    for key, first_seen in group_first_seen.items():
+        closed_at = latest_closed.get(key)
+        if not closed_at or closed_at >= first_seen:
+            continue
+        try:
+            gap_days = (datetime.strptime(first_seen[:10], "%Y-%m-%d")
+                        - datetime.strptime(closed_at[:10], "%Y-%m-%d")).days
+        except ValueError:
+            continue
+        if gap_days >= MIN_REPOST_GAP_DAYS:
+            flags[key] = closed_at[:10]
+    return flags
 
 
 def content_key(company_name, title):

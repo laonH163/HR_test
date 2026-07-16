@@ -218,7 +218,20 @@
                         <option value="longest">등록 오래된순</option>
                     </select>
                 </div>
-                <div class="flex-1"></div>
+                <div class="flex-1 flex items-end justify-end">
+                    <span x-show="backupMsg" x-text="backupMsg" x-transition class="text-xs font-bold text-emerald-600 pb-2.5 pr-3"></span>
+                </div>
+                <!-- 내 기록(북마크·지원상태·메모) 백업/복원 — localStorage는 기기(브라우저) 종속이라
+                     PC↔폰 이동 시 JSON 파일로 옮긴다 -->
+                <button @click="exportBackup()"
+                        class="text-xs bg-white border border-slate-300 text-slate-700 px-4 py-2.5 rounded-lg hover:bg-slate-50 font-bold whitespace-nowrap">
+                    💾 내 기록 백업
+                </button>
+                <button @click="$refs.backupFile.click()"
+                        class="text-xs bg-white border border-slate-300 text-slate-700 px-4 py-2.5 rounded-lg hover:bg-slate-50 font-bold whitespace-nowrap">
+                    📥 기록 가져오기
+                </button>
+                <input type="file" x-ref="backupFile" accept=".json,application/json" class="hidden" @change="importBackup($event)">
                 <button @click="exportCsv()"
                         class="text-xs bg-slate-800 text-white px-4 py-2.5 rounded-lg hover:bg-slate-700 font-bold whitespace-nowrap">
                     ⬇ 필터 결과 CSV 저장 (<span x-text="filteredJobs().length"></span>건)
@@ -295,6 +308,11 @@
                                         <!-- 마감일 카운트다운 뱃지 (deadline 보유 공고만) -->
                                         <template x-if="getDeadlineBadge(job)">
                                             <span class="px-1.5 py-0.5 text-[10px] rounded font-bold mono" :class="getDeadlineBadgeClass(job)" x-text="getDeadlineBadge(job)"></span>
+                                        </template>
+                                        <!-- 재공고 뱃지 — 과거에 마감됐다가 다시 올라온 공고 (장기 미충원 신호) -->
+                                        <template x-if="job.is_repost">
+                                            <span class="px-1.5 py-0.5 text-[10px] rounded font-bold bg-rose-50 text-rose-700"
+                                                  :title="'과거 ' + (job.repost_last_closed || '') + ' 마감 이력이 있는 재공고입니다'">🔁 재공고</span>
                                         </template>
                                         <!-- Cert & Skill tags badges -->
                                         <template x-for="cert in job.preferred_certifications" :key="cert">
@@ -430,6 +448,9 @@
                             <template x-if="getDeadlineBadge(job)">
                                 <span class="px-2 py-0.5 rounded font-bold mono text-[10px]" :class="getDeadlineBadgeClass(job)" x-text="getDeadlineBadge(job)"></span>
                             </template>
+                            <template x-if="job.is_repost">
+                                <span class="px-2 py-0.5 rounded font-bold text-[10px] bg-rose-50 text-rose-700">🔁 재공고</span>
+                            </template>
                         </div>
 
                         <!-- Mobile Details (Accordion) -->
@@ -523,6 +544,7 @@
                 bookmarks: [],          // [job_id, ...]
                 applicationStates: {},  // {job_id: 'applied' | 'passed' | ...}
                 memos: {},              // {job_id: '내용'}
+                backupMsg: '',          // 백업/복원 결과 안내 문구 (수 초 후 자동 소거)
 
                 init() {
                     this.loadLocalData();
@@ -914,6 +936,66 @@
                     a.download = 'game_finance_jobs_' + String(UPDATE_TIME_STRING || '').slice(0, 10) + '.csv';
                     a.click();
                     URL.revokeObjectURL(a.href);
+                },
+
+                // ━━━ 내 활동 기록(북마크·지원상태·메모) 백업/복원 ━━━
+                // localStorage는 브라우저(기기) 종속이라 회사 PC↔집 PC↔폰이 따로 논다.
+                // JSON 파일 내보내기/가져오기로 기기 간 이동·유실 대비 백업을 지원한다.
+                exportBackup() {
+                    const payload = {
+                        version: 1,
+                        exported_at: UPDATE_TIME_STRING,
+                        bookmarks: this.bookmarks,
+                        applicationStates: this.applicationStates,
+                        memos: this.memos
+                    };
+                    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+                    const a = document.createElement('a');
+                    a.href = URL.createObjectURL(blob);
+                    a.download = 'gfs_my_records_' + String(UPDATE_TIME_STRING || '').slice(0, 10) + '.json';
+                    a.click();
+                    URL.revokeObjectURL(a.href);
+                    this.flashBackupMsg('✅ 내 기록 백업 파일을 저장했습니다');
+                },
+
+                // 가져오기는 병합 방식: 같은 공고는 '가져온 파일 값이 우선'하고,
+                // 이 기기에만 있는 기록은 유지된다. (파일 = 옮겨오는 최신본이라는 전제)
+                importBackup(event) {
+                    const file = event.target.files && event.target.files[0];
+                    if (!file) return;
+                    const reader = new FileReader();
+                    reader.onload = () => {
+                        try {
+                            const data = JSON.parse(reader.result);
+                            if (!data || typeof data !== 'object' || Array.isArray(data)) {
+                                throw new Error('백업 형식이 아님');
+                            }
+                            // 필드별 타입 검증 — 손상된 JSON(문자열 등)이 Object.assign에서
+                            // 문자 인덱스 키로 분해돼 localStorage를 오염시키는 것 방지
+                            const importedBookmarks = Array.isArray(data.bookmarks)
+                                ? data.bookmarks.filter(b => typeof b === 'string') : [];
+                            const isPlainObj = v => v && typeof v === 'object' && !Array.isArray(v);
+                            const importedStates = isPlainObj(data.applicationStates) ? data.applicationStates : {};
+                            const importedMemos = isPlainObj(data.memos) ? data.memos : {};
+                            this.bookmarks = [...new Set([...this.bookmarks, ...importedBookmarks])];
+                            this.applicationStates = Object.assign({}, this.applicationStates, importedStates);
+                            this.memos = Object.assign({}, this.memos, importedMemos);
+                            localStorage.setItem('gfs_bookmarks', JSON.stringify(this.bookmarks));
+                            localStorage.setItem('gfs_app_states', JSON.stringify(this.applicationStates));
+                            localStorage.setItem('gfs_memos', JSON.stringify(this.memos));
+                            this.flashBackupMsg('✅ 기록을 병합했습니다 (같은 공고는 가져온 값 우선)');
+                        } catch (e) {
+                            this.flashBackupMsg('❌ 가져오기 실패: 올바른 백업 JSON 파일이 아닙니다');
+                        }
+                        event.target.value = '';
+                    };
+                    reader.readAsText(file);
+                },
+
+                flashBackupMsg(msg) {
+                    this.backupMsg = msg;
+                    clearTimeout(this._backupMsgTimer);
+                    this._backupMsgTimer = setTimeout(() => { this.backupMsg = ''; }, 4000);
                 },
 
                 resetFilters() {

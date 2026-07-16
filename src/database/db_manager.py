@@ -3,11 +3,15 @@ import os
 import json
 import re
 
+from src.utils.jdtext import body_degraded
+
 class DBManager:
     def __init__(self, db_path="data/scrap_master.db"):
         self.db_path = db_path
         # 데이터베이스 폴더가 없다면 자동 생성
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+        # 직전 upsert의 변경 상세 (마감일 연장/단축 알림용)
+        self.last_change_details = {}
         self.init_db()
 
     def get_connection(self):
@@ -114,9 +118,14 @@ class DBManager:
         """
         job_posting 정보를 Upsert하고, 변경사항이 존재한다면 True를 반환.
         posting은 dict 타입이어야 함.
+
+        호출 직후 last_change_details에서 변경 상세를 읽을 수 있다:
+        {"deadline_from": 기존값, "deadline_to": 새값} — 기존 마감일이 있었는데
+        실제로 바뀐(연장/단축) 경우에만 채워진다(최초 확보는 제외).
         """
         conn = self.get_connection()
         cursor = conn.cursor()
+        self.last_change_details = {}
 
         # 기존 공고 존재 여부 확인
         cursor.execute("SELECT title, raw_html, status, deadline FROM job_postings WHERE id = ?", (posting["id"],))
@@ -125,15 +134,35 @@ class DBManager:
         is_modified = False
 
         if existing:
+            # [본문 축소 방지 가드] 이미 상세요강을 확보한 공고인데 오늘 수집분이
+            # 제목/스니펫 수준으로 열화됐으면(상세 접근 실패·개편이 원인일 개연성) 기존
+            # 본문을 보존한다. 판정 규칙은 src/utils/jdtext.body_degraded 참조.
+            # ※ posting dict에도 보존본을 되돌려준다(의도된 변이) — 호출자(main.py)의
+            #   분류기가 열화 본문으로 재분류해 job_categories를 덮어쓰는 것까지 막는다.
+            incoming_raw = posting["raw_html"]
+            if body_degraded(existing["raw_html"], incoming_raw):
+                incoming_raw = existing["raw_html"]
+                posting["raw_html"] = incoming_raw
+                print(f"    [GUARD] 본문 축소 감지 → 기확보 상세요강 보존: {posting['id']}")
+
             # 상태 비교 (제목이나 내용 혹은 상태가 바뀌었는지 점검)
             # 델타 분석을 위해 raw_html 내용의 변경 감지 — 단, 공백·날짜 같은 노이즈는
             # 정규화로 무시하여 의미 있는 본문 변경(자격요건·연봉 등)만 MODIFIED로 잡는다.
-            content_changed = self._normalize_for_diff(existing["raw_html"]) != self._normalize_for_diff(posting["raw_html"])
+            content_changed = self._normalize_for_diff(existing["raw_html"]) != self._normalize_for_diff(incoming_raw)
+            # 제목 변경은 raw_html과 독립적으로 감지 — 가드가 본문을 보존한 날에도
+            # 제목 개정('경력 5년+' 추가 등)이 유실되지 않도록.
+            title_changed = existing["title"] != posting["title"]
             # 마감일 변경(연장/단축)은 지원 전략에 직결되는 실질 변경이므로 MODIFIED로 잡는다.
             # 단, 수집처가 마감일 정보를 아예 안 주는 경우(None)는 기존 값을 지우지 않는다.
             new_deadline = posting.get("deadline")
             deadline_changed = new_deadline is not None and new_deadline != existing["deadline"]
-            if content_changed or deadline_changed or existing["status"] != posting["status"]:
+            if deadline_changed and existing["deadline"]:
+                # 기존 마감일이 실제로 바뀐 경우만 상세 기록 (None→값 최초 확보는 변경 알림 대상 아님)
+                self.last_change_details = {
+                    "deadline_from": existing["deadline"],
+                    "deadline_to": new_deadline,
+                }
+            if content_changed or deadline_changed or title_changed or existing["status"] != posting["status"]:
                 cursor.execute("""
                     UPDATE job_postings
                     SET title = ?, origin_url = ?, location = ?, status = ?, raw_html = ?, last_updated_at = ?,
@@ -141,7 +170,7 @@ class DBManager:
                     WHERE id = ?
                 """, (
                     posting["title"], posting["origin_url"], posting.get("location"),
-                    posting["status"], posting["raw_html"], posting["last_updated_at"],
+                    posting["status"], incoming_raw, posting["last_updated_at"],
                     new_deadline, posting["id"]
                 ))
                 is_modified = True
@@ -266,6 +295,40 @@ class DBManager:
         rows = cursor.fetchall()
         conn.close()
         return rows
+
+    def get_raw_html_map(self, ids):
+        """공고 id 목록의 저장된 raw_html 조회 — GI 본문 보강 시 기확보분 재사용용"""
+        if not ids:
+            return {}
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        placeholders = ",".join("?" * len(ids))
+        cursor.execute(
+            f"SELECT id, raw_html FROM job_postings WHERE id IN ({placeholders})",
+            list(ids),
+        )
+        result = {row["id"]: row["raw_html"] for row in cursor.fetchall()}
+        conn.close()
+        return result
+
+    def get_closed_key_history(self):
+        """CLOSED 공고의 (회사명, 제목, 마지막 관측시각) 목록 — 재공고(🔁) 판별 원료.
+
+        같은 회사+제목이 여러 번 닫혔으면 가장 최근 관측만 남긴다.
+        content_key 정규화·판별 로직은 src/utils/dedup.compute_repost_flags가 담당."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT company_name, title, MAX(last_updated_at) AS closed_at
+            FROM job_postings
+            WHERE status = 'CLOSED'
+            GROUP BY company_name, title
+            """
+        )
+        history = [dict(r) for r in cursor.fetchall()]
+        conn.close()
+        return history
 
     def get_companies_seen_before(self, cutoff_date):
         """cutoff_date('YYYY-MM-DD') 이전에 처음 관측된 회사명 목록 — 신규 진입사 판별용.

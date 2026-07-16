@@ -2,6 +2,7 @@ import os
 import json
 import sqlite3
 
+from src.utils.dedup import compute_repost_flags, content_key
 from src.utils.timeutil import now_kst_str
 
 class HTMLGenerator:
@@ -10,8 +11,12 @@ class HTMLGenerator:
         self.template_path = template_path
         self.output_path = output_path
 
-    def generate_dashboard(self):
-        """SQLite에서 데이터를 긁어와 단일 HTML 대시보드 파일을 생성"""
+    def generate_dashboard(self, closed_history=None):
+        """SQLite에서 데이터를 긁어와 단일 HTML 대시보드 파일을 생성.
+
+        closed_history: 재공고 판별용 CLOSED 이력. 파이프라인(main)이 이미 조회한
+        값을 넘기면 같은 쿼리를 반복하지 않는다. None이면(--mode report 단독 실행)
+        직접 조회한다."""
         # 1. 템플릿 존재 여부 확인
         if not os.path.exists(self.template_path):
             raise FileNotFoundError(f"HTML Template not found: {self.template_path}")
@@ -19,10 +24,22 @@ class HTMLGenerator:
         # 2. SQLite 데이터 조회
         active_postings = self.db_manager.get_all_active_postings()
 
-        # Row 데이터를 직렬화 가능한 dict의 리스트로 가공
+        # Row → dict 변환 (아래 가공 루프가 제자리 수정하며, 이후 재사용 없음)
+        active_dicts = [dict(r) for r in active_postings]
+
+        # 재공고(🔁) 키 계산 — 과거 CLOSED 이력이 있고 현 활성 그룹이 그 이후 재등장한 키.
+        # 키 단위 판정이므로 같은 content_key로 병합되는 카드들은 항상 같은 값을 갖는다
+        # (JS 병합 시 대표 카드가 무엇이든 배지가 일관됨).
+        try:
+            if closed_history is None:
+                closed_history = self.db_manager.get_closed_key_history()
+            repost_flags = compute_repost_flags(active_dicts, closed_history)
+        except Exception:
+            repost_flags = {}
+
+        # 가공 처리
         job_list = []
-        for row in active_postings:
-            job_dict = dict(row)
+        for job_dict in active_dicts:
             # Row 내 None 값이나 NULL 필드 안정적 폴백 처리
             if job_dict.get("min_experience") is None:
                 job_dict["min_experience"] = 0
@@ -56,6 +73,11 @@ class HTMLGenerator:
                         job_dict[field] = json.loads(val)
                     except Exception:
                         job_dict[field] = [val]
+
+            # 재공고(🔁) 플래그 — 프론트는 이 값만 표시하면 됨(로직 미러링 불필요)
+            job_key = content_key(job_dict.get("company_name"), job_dict.get("title"))
+            job_dict["is_repost"] = job_key in repost_flags
+            job_dict["repost_last_closed"] = repost_flags.get(job_key)
 
             job_list.append(job_dict)
 

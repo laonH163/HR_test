@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 
-from src.utils.dedup import content_key, normalize_company, source_rank
+from src.utils.dedup import compute_repost_flags, content_key, normalize_company, source_rank
 
 # 로컬 디버깅 시 .env 파일 로드 지원
 load_dotenv()
@@ -110,6 +110,18 @@ class TelegramSender:
             return False
 
     @staticmethod
+    def _md_label(date_str, fallback="?"):
+        """'YYYY-MM-DD…' 문자열을 'M/D' 표시 라벨로 변환 (실패 시 fallback).
+
+        마감일 변경·재공고 배지가 같은 규칙을 쓰도록 단일화 — 표기 형식을 바꿀 때
+        브리핑 안에서 날짜 표기가 섞이지 않게 한다."""
+        try:
+            d = datetime.strptime(str(date_str)[:10], "%Y-%m-%d")
+            return f"{d.month}/{d.day}"
+        except Exception:
+            return fallback
+
+    @staticmethod
     def _normalize_company(name):
         """회사명 정규화 — 공백·법인 표기 노이즈 제거 (dedup 키 및 제목 프리픽스 대조용)"""
         return normalize_company(name)
@@ -147,7 +159,7 @@ class TelegramSender:
             parts.append(", ".join(s.upper() for s in others))
         return " · ".join(parts)
 
-    def build_daily_briefing_message(self, newly_added, modified_count, closed_count, active_postings, weekly_trend=None, failed_sources=None, zero_platforms=None, known_companies=None, mass_close_held=None, source_drops=None):
+    def build_daily_briefing_message(self, newly_added, modified_count, closed_count, active_postings, weekly_trend=None, failed_sources=None, zero_platforms=None, known_companies=None, mass_close_held=None, source_drops=None, deadline_changes=None, closed_history=None):
         """당일 수집된 통계 데이터 및 공고 리스트 기반 가독성 높은 텔레그램 카드 메세지 빌딩 (중복 디듀프리케이션 포함)"""
         KST = ZoneInfo("Asia/Seoul")
         run_date_env = os.getenv('RUN_DATE_STR', '')
@@ -201,6 +213,14 @@ class TelegramSender:
 
         # 전체 활성 공고 중복 제거 가동
         deduped_active = deduplicate_postings(active_postings)
+
+        # 재공고(🔁) 키 계산 — 과거 CLOSED 이력이 있고, 현 활성 그룹이 그 이후 재등장한 키만
+        repost_keys = {}
+        if closed_history:
+            try:
+                repost_keys = compute_repost_flags(active_postings, closed_history)
+            except Exception:
+                repost_keys = {}
 
         # 오늘 추가된 신규 공고 아이디 구하기 (posted_at 날짜가 오늘 날짜와 일치하는 공고 추출)
         new_jobs = [j for j in deduped_active if j.get("posted_at") == run_date]
@@ -267,6 +287,30 @@ class TelegramSender:
                 msg_lines.append(f"• <b>[{dd_label}]</b> [{company_clean}] <a href='{first_url}'>{title_clean}</a>")
             msg_lines.append("")
 
+        # 0-b. 마감일 변경(연장/단축) 공고 — 지원 전략에 직결되는 실질 변경만 노출
+        #      (마감일 최초 확보는 제외 — upsert가 기존 값이 있었던 실제 변경만 전달한다)
+        if deadline_changes:
+            msg_lines.append("<b>🔄 마감일 변경 감지:</b>")
+            seen_change_keys = set()  # 같은 공고가 여러 소스에서 동시 변경되면 1줄만
+            for change in deadline_changes:
+                change_key = content_key(change.get("company_name"), change.get("title"))
+                if change_key in seen_change_keys:
+                    continue
+                seen_change_keys.add(change_key)
+                try:
+                    new_is_later = (datetime.strptime(change["new"], "%Y-%m-%d")
+                                    > datetime.strptime(change["old"], "%Y-%m-%d"))
+                    verdict = "연장" if new_is_later else "단축⚠️"
+                except Exception:
+                    verdict = "변경"
+                old_label = self._md_label(change.get("old"), str(change.get("old")))
+                new_label = self._md_label(change.get("new"), str(change.get("new")))
+                title_clean = (change.get("title") or "").replace("<", "&lt;").replace(">", "&gt;")
+                company_clean = (change.get("company_name") or "").replace("<", "&lt;").replace(">", "&gt;")
+                url = change.get("origin_url", "")
+                msg_lines.append(f"• [{company_clean}] <a href='{url}'>{title_clean}</a>: {old_label} → {new_label} ({verdict})")
+            msg_lines.append("")
+
         # 1. 신규 등록 공고가 있을 때 상단 노출
         #    처음 보는 회사(전체 이력에 없던 회사)는 🆕 배지 — 게임업계 재무채용 신규 진입 신호
         known_norm = {normalize_company(c) for c in (known_companies or [])}
@@ -278,7 +322,14 @@ class TelegramSender:
                 new_company_badge = ""
                 if known_companies is not None and normalize_company(job["company_name"]) not in known_norm:
                     new_company_badge = "🆕 "
-                msg_lines.append(f"• {new_company_badge}<b>[{company_clean}]</b> {title_clean}")
+                # 재공고(🔁) — 같은 회사+제목 공고가 과거에 닫혔다가 다시 등장 (장기 미충원/유령공고 신호)
+                repost_suffix = ""
+                job_key = content_key(job.get("company_name"), job.get("title"))
+                if job_key in repost_keys:
+                    closed_label = self._md_label(repost_keys[job_key], "")
+                    repost_suffix = (f" <i>🔁 재공고 (~{closed_label} 게시이력)</i>"
+                                     if closed_label else " <i>🔁 재공고</i>")
+                msg_lines.append(f"• {new_company_badge}<b>[{company_clean}]</b> {title_clean}{repost_suffix}")
 
                 # 멀티 소스 배지/링크 표출 처리 (Milestone 5)
                 links_str = []
