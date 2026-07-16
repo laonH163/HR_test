@@ -96,6 +96,7 @@ class DBManager:
         self._add_column_if_not_exists("job_categories", "preferred_skills_tags", "TEXT")     # 실무 역량 태그 (JSON)
         self._add_column_if_not_exists("job_postings", "deadline", "TEXT")  # 마감일 YYYY-MM-DD (D-N 배지 환산, 상시채용은 NULL)
         self._add_column_if_not_exists("scrape_logs", "source_counts", "TEXT")  # 소스별 수집 건수 JSON (수집량 급감 감지용)
+        self._add_column_if_not_exists("scrape_logs", "successful_sources", "TEXT")  # 성공 소스 JSON (하루 기준 경고 보정용)
 
     def _add_column_if_not_exists(self, table_name, column_name, column_type):
         """기존 테이블에 컬럼이 없을 때 안전하게 ALTER TABLE을 가동하는 마이그레이션 도우미"""
@@ -237,15 +238,44 @@ class DBManager:
         conn = self.get_connection()
         cursor = conn.cursor()
         cursor.execute("""
-            INSERT INTO scrape_logs (run_date, newly_added, modified_count, closed_count, is_success, error_log, source_counts)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO scrape_logs (run_date, newly_added, modified_count, closed_count, is_success, error_log, source_counts, successful_sources)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             log["run_date"], log["newly_added"], log["modified_count"],
             log["closed_count"], log["is_success"], log.get("error_log"),
-            json.dumps(log.get("source_counts") or {}, ensure_ascii=False)
+            json.dumps(log.get("source_counts") or {}, ensure_ascii=False),
+            json.dumps(sorted(log.get("successful_sources") or []), ensure_ascii=False)
         ))
         conn.commit()
         conn.close()
+
+    def get_sources_succeeded_today(self, run_date):
+        """오늘(run_date) 실행들 중 어느 시도에서든 '수집에 성공한' 소스 집합.
+
+        최종 브리핑은 재시도 실행이 보내므로, 이번 시도가 실패한 소스라도 같은 날
+        앞선 시도에서 이미 확보됐다면 '접속 실패' 경고 대상이 아니다(하루 기준 보정).
+        successful_sources 컬럼이 없는 과거 행은 source_counts의 수집 건수>0으로 폴백."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT source_counts, successful_sources FROM scrape_logs WHERE run_date = ?",
+            (run_date,),
+        )
+        succeeded = set()
+        for row in cursor.fetchall():
+            try:
+                for s in json.loads(row["successful_sources"] or "[]"):
+                    succeeded.add(s)
+            except Exception:
+                pass
+            try:
+                for s, n in json.loads(row["source_counts"] or "{}").items():
+                    if n and n > 0:
+                        succeeded.add(s)
+            except Exception:
+                pass
+        conn.close()
+        return succeeded
 
     def get_recent_source_counts(self, runs=7):
         """최근 성공 실행들의 소스별 수집 건수 이력 — {source: [건수, ...]} (최신순).

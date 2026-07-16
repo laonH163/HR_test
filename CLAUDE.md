@@ -7,6 +7,11 @@ GitHub Actions로 매일 08:00 KST 정기 실행.
 - 대시보드: https://laonh163.github.io/HR_test/
 
 ## 현재 상태 (2026-07-16)
+- 경고 오보 교정 (이 커밋): 수동 dispatch 검증(run 84)에서 1차가 잡코리아 전부 정상 수집했는데
+  재시도 러너만 IP 차단 → '24곳 접속 실패' 오경보 발송 실사고. 경고를 '하루 기준'으로 보정 —
+  scrape_logs.successful_sources 기록 + get_sources_succeeded_today로 오늘 확보 소스는
+  접속 실패·0건 경고에서 제외(main 13-a). 데이터 보호 가드는 시도 기준 유지. 테스트 100개 통과.
+  ※ 과거 행엔 성공 기록이 없어 내일 하루는 '평소 0건 어댑터'가 과도기로 경고에 남을 수 있음
 - 개인화 고도화 4종 구현 (벤치마킹 검토 기반, 이 커밋): ① 재공고 🔁 배지 — 과거 CLOSED
   이력이 있고 현 활성 그룹이 그 이후 재등장한 키만(좀비 CLOSED 오탐 방지 규칙,
   src/utils/dedup.compute_repost_flags). 실데이터 5키 검출(크래프톤 IR 등) 실측.

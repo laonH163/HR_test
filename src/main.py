@@ -271,7 +271,8 @@ def run_scraping_phase():
             "closed_count": closed_count,
             "is_success": 1 if successful_sources else 0,
             "error_log": "; ".join(error_parts) if error_parts else None,
-            "source_counts": dict(source_counts)  # 소스별 수집 건수 (급감 감지 기준선)
+            "source_counts": dict(source_counts),  # 소스별 수집 건수 (급감 감지 기준선)
+            "successful_sources": sorted(successful_sources)  # 하루 기준 경고 보정용
         }
         db_manager.insert_scrape_log(log_entry)
         print("[OK] 수집 이력 로그 적재 완료.")
@@ -303,6 +304,22 @@ def run_scraping_phase():
         return
 
     print("\n[-] 프라이빗 텔레그램 알림 발송(Milestone 4) 가동 중...")
+
+    # 13-a. [하루 기준 경고 보정] 최종 브리핑은 재시도 실행이 보내므로, 이번 시도가
+    #       실패한 소스라도 오늘 다른 시도에서 이미 확보됐다면 경고 대상이 아니다.
+    #       (2026-07-16 실측: 1차가 잡코리아 전부 정상 수집했는데 재시도 러너만 IP 차단
+    #        → '24곳 접속 실패' 오경보 발송. 경고의 의미는 '오늘 자료 미확보'여야 한다.)
+    #       ※ 데이터 보호 가드(마감 보류 등)는 시도별 보수 판정 그대로 — 표시만 보정.
+    try:
+        sources_ok_today = db_manager.get_sources_succeeded_today(datetime.now(KST).strftime("%Y-%m-%d"))
+    except Exception:
+        sources_ok_today = set()
+    display_failed_sources = sorted(set(failed_sources) - sources_ok_today)
+    display_zero_platforms = [s for s in zero_platforms if s not in sources_ok_today]
+    recovered = (set(failed_sources) | set(zero_platforms)) & sources_ok_today
+    if recovered:
+        print(f"    [INFO] 오늘 타 시도에서 이미 확보된 소스는 경고 제외: {', '.join(sorted(recovered))}")
+
     try:
         # 데이터베이스 전체 활성 데이터 조회
         active_postings_rows = db_manager.get_all_active_postings()
@@ -323,7 +340,7 @@ def run_scraping_phase():
         # 텔레그램 마크다운 메세지 빌딩 (실패·0건·일괄소멸·급감 경고 포함)
         briefing_text = telegram.build_daily_briefing_message(
             newly_added, modified_count, closed_count, active_postings, weekly_trend,
-            failed_sources=failed_sources, zero_platforms=zero_platforms,
+            failed_sources=display_failed_sources, zero_platforms=display_zero_platforms,
             known_companies=known_companies,
             mass_close_held=getattr(analyzer, "last_mass_close_held", []),
             source_drops=source_drops,
