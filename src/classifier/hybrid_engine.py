@@ -322,9 +322,13 @@ class HybridClassificationEngine:
             if tool in norm_text:
                 tools.append(tool.upper())
 
-        # 중복 제거 및 콤마 구분자 문자열화
-        unique_tools = list(set(tools))
-        return ", ".join(unique_tools) if unique_tools else "EXCEL"
+        # 중복 제거 후 결정적 순서로 직렬화.
+        # set 순서를 그대로 쓰면 같은 데이터인데도 실행마다 문자열이 달라져
+        # index.html diff에 의미 없는 변경이 쌓인다(2026-07-21 지적).
+        unique_tools = sorted(set(tools))
+        # 근거가 없으면 'EXCEL'을 지어내지 않는다 — 실측상 EXCEL 단독 31건 중 29건이
+        # 제목·본문 어디에도 엑셀 언급이 없었다(기본값이 사실로 둔갑한 사례).
+        return ", ".join(unique_tools) if unique_tools else None
 
     def generate_ai_summary(self, title, company, work_type, exp_min, exp_max, tools, category="재무/회계"):
         """분석된 속성 정보들을 종합하여 사용자가 한눈에 이해할 수 있는 3줄 한글 요약 생성.
@@ -343,7 +347,7 @@ class HybridClassificationEngine:
         summary_lines = [
             f"1. {company} {category} 직무 - '{title}' 채용 공고",
             f"2. 근무 요건: {work_type} | {exp_str}",
-            f"3. 요구 직무 도구 및 핵심 역량: {tools if tools else 'EXCEL 중심업무'}"
+            f"3. 요구 직무 도구 및 핵심 역량: {tools if tools else '공고에 명시 없음'}"
         ]
         return "\n".join(summary_lines)
 
@@ -474,11 +478,11 @@ class HybridClassificationEngine:
                     elif current_session == "pref" and len(preferred_skills) < 5:
                         preferred_skills.append(clean_line)
 
-        # 비어 있을 경우 기본값 처리
-        if not key_requirements:
-            key_requirements = ["상세 공고 자격요건 참조", "해당 분야 회계 지식 소유자"]
-        if not preferred_skills:
-            preferred_skills = ["게임 산업 관심도 우수자", "동종 업계 경험자 우대"]
+        # 추출 실패 시 그럴듯한 문구를 지어내지 않는다 — 빈 목록으로 두고 화면이
+        # '공고 원문 확인 필요'로 정직하게 표기하게 한다.
+        # 실측(2026-07-21): 자격요건 34건·우대사항 43건이 기본 문구였고, 게임잡 17건은
+        # 둘 다 기본 문구였다(게임잡 상세요강이 iframe에 있어 본문 파싱이 애초에 불가).
+        # '게임 산업 관심도 우수자' 같은 문구가 공고에 실제로 있는 것처럼 보였다.
 
         # 9. 우대 자격증 및 실무 역량 태깅 (Milestone 5 정교화)
         preferred_certifications = []

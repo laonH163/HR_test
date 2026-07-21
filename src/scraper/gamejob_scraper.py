@@ -109,6 +109,8 @@ class GameJobScraper:
         self.is_last_run_success = False
         success_connections = 0
         failed_errors = []
+        detail_failures = 0        # 상세 실패했지만 목록 행으로 보존한 건수
+        detail_unrecoverable = 0   # 목록 행도 부실해 보존조차 못 한 건수
 
         xhr_headers = dict(self.headers)
         xhr_headers["X-Requested-With"] = "XMLHttpRequest"
@@ -157,12 +159,47 @@ class GameJobScraper:
 
                     # 각 공고 상세 페이지 접속 및 정보 수집
                     time.sleep(random.uniform(0.5, 1.2))
+                    detail_soup = None
                     try:
                         detail_res = self.session.get(detail_url, headers=self.headers, timeout=10)
-                        if detail_res.status_code != 200:
+                        if detail_res.status_code == 200:
+                            detail_html = detail_res.content.decode("utf-8", errors="replace")
+                            detail_soup = BeautifulSoup(detail_html, "html.parser")
+                    except Exception:
+                        detail_soup = None
+
+                    if detail_soup is None:
+                        # [상세 실패 보존] 예전에는 여기서 그냥 continue해 이 공고가 오늘 수집분에서
+                        # 통째로 빠졌다. 그러면 delta_analyzer가 '오늘 안 보였다'며 기존 활성 공고를
+                        # 즉시 마감 처리한다 — 소스는 '완전 성공'으로 보고되므로 부분 실패·0건·일괄
+                        # 소멸 어느 방어선에도 안 걸린다(2026-07-21 GPT 3차 검토 지적).
+                        # 목록 행만으로 최소 레코드를 만들어 ID를 오늘 수집분에 남긴다. 본문은
+                        # 제목뿐이지만 upsert의 본문 축소 방지 가드가 기확보 상세요강을 지키므로
+                        # 기존 공고의 분류값이 열화되지도 않는다.
+                        # ※ 목록 행에 회사/제목이 없으면 최소 레코드조차 못 만드니, 그때는
+                        #   소스를 부분 실패로 표시해 이 소스의 마감 판정 자체를 보류시킨다.
+                        if not row["company"] or not row["title"]:
+                            detail_unrecoverable += 1
                             continue
-                        detail_html = detail_res.content.decode("utf-8", errors="replace")
-                        detail_soup = BeautifulSoup(detail_html, "html.parser")
+                        results.append({
+                            "id": job_id,
+                            "source": "gamejob",
+                            "company_name": row["company"],
+                            "title": row["title"],
+                            "origin_url": detail_url,
+                            "location": "서울/경기",
+                            "posted_at": datetime.now(KST).strftime("%Y-%m-%d"),
+                            "status": "ACTIVE",
+                            "raw_html": row["title"],
+                            "first_seen_at": datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S"),
+                            "last_updated_at": datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S"),
+                            "deadline": row["deadline"],
+                        })
+                        count += 1
+                        detail_failures += 1
+                        continue
+
+                    try:
 
                         # 회사명·제목은 목록 행이 1차 소스 — 상세 <title>의 첫 대괄호는 회사명이
                         # 아니라 '[전략실]' '[Finance Div.]' 같은 부서명인 공고가 많아(2026-07-09 실측)
@@ -226,7 +263,11 @@ class GameJobScraper:
         # 볼 수 없다. 성공으로 넘기면 delta_analyzer가 소스를 신뢰해, 막힌 키워드로만
         # 잡히던 기존 활성 공고를 즉시 CLOSED 처리한다(2026-07-21 코덱스 교차검토 지적).
         # 마감 판정만 보류시키고 수집분은 그대로 쓴다.
-        self.is_last_run_partial = bool(failed_errors)
+        if detail_failures or detail_unrecoverable:
+            print(f"    [WARN] 게임잡 상세 실패 {detail_failures + detail_unrecoverable}건 "
+                  f"(목록 행으로 보존 {detail_failures}건 / 보존 불가 {detail_unrecoverable}건)")
+        # 보존조차 못 한 건이 있으면 '이 소스를 다 훑었다'고 볼 수 없다 → 마감 판정 보류
+        self.is_last_run_partial = bool(failed_errors) or detail_unrecoverable > 0
         unique_postings = {}
         for item in results:
             unique_postings[item["id"]] = item

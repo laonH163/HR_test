@@ -73,3 +73,69 @@ class TestGameJobSearchParsing(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class _Resp:
+    def __init__(self, status_code, body=""):
+        self.status_code = status_code
+        self.content = body.encode("utf-8")
+        self.text = body
+
+
+class _StubSession:
+    """검색은 성공하고 상세만 실패시키는 세션 — 상세 실패 경로 재현용"""
+
+    def __init__(self, fragment, detail_status=500, detail_raises=False):
+        self.fragment = fragment
+        self.detail_status = detail_status
+        self.detail_raises = detail_raises
+        self.headers = {}
+
+    def post(self, url, **kwargs):
+        return _Resp(200, self.fragment)
+
+    def get(self, url, **kwargs):
+        if self.detail_raises:
+            raise ConnectionError("상세 접속 실패(모의)")
+        return _Resp(self.detail_status, "")
+
+
+class TestGameJobDetailFailurePreservesPosting(unittest.TestCase):
+    """상세 페이지 1건이 실패해도 그 공고가 오늘 수집분에서 사라지면 안 된다.
+
+    2026-07-21 GPT 3차 검토 지적: 상세 실패 시 그냥 continue해 공고가 결과에서 빠졌다.
+    그러면 delta_analyzer가 '오늘 안 보였다'며 기존 활성 공고를 즉시 CLOSED 처리한다 —
+    소스는 '완전 성공'으로 보고되므로 부분 실패·0건·일괄 소멸 어느 방어선에도 안 걸린다."""
+
+    def _run(self, **stub_kwargs):
+        scraper = GameJobScraper()
+        scraper.session = _StubSession(FIXTURE_FRAGMENT, **stub_kwargs)
+        # sleep 제거 — 테스트 속도
+        import src.scraper.gamejob_scraper as mod
+        orig_sleep = mod.time.sleep
+        mod.time.sleep = lambda *a, **k: None
+        try:
+            return scraper, scraper.scrape_finance_jobs(limit=15)
+        finally:
+            mod.time.sleep = orig_sleep
+
+    def test_http_error_on_detail_keeps_posting(self):
+        scraper, results = self._run(detail_status=500)
+        ids = {r["id"] for r in results}
+        self.assertIn("gamejob_282441", ids, "상세 실패 공고가 결과에서 사라졌다 → 오탐 마감 발생")
+        self.assertIn("gamejob_283001", ids)
+        # 목록 행 정보는 살아 있어야 한다
+        com2us = next(r for r in results if r["id"] == "gamejob_282441")
+        self.assertEqual(com2us["company_name"], "주식회사 컴투스")
+        self.assertEqual(com2us["deadline"], None)
+        wemade = next(r for r in results if r["id"] == "gamejob_283001")
+        self.assertEqual(wemade["deadline"][5:], "07-31")
+
+    def test_exception_on_detail_keeps_posting(self):
+        scraper, results = self._run(detail_raises=True)
+        self.assertIn("gamejob_282441", {r["id"] for r in results})
+
+    def test_non_finance_row_still_filtered_out(self):
+        """상세 실패 보존이 필터를 무력화하면 안 된다 — HR 담당자는 여전히 제외"""
+        scraper, results = self._run(detail_status=500)
+        self.assertNotIn("gamejob_283999", {r["id"] for r in results})

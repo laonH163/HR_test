@@ -43,8 +43,8 @@ class HTMLGenerator:
             # Row 내 None 값이나 NULL 필드 안정적 폴백 처리
             if job_dict.get("min_experience") is None:
                 job_dict["min_experience"] = 0
-            if job_dict.get("tools_used") is None:
-                job_dict["tools_used"] = "EXCEL"
+            # tools_used가 비면 비운 채로 둔다 — 예전에는 'EXCEL'을 채워 넣어,
+            # 엑셀 언급이 전혀 없는 공고까지 실무 툴이 확인된 것처럼 보였다.
 
             # 본문 보유 여부 — 제목만 수집된 공고(잡코리아 우회·greetinghr 등)는 근무형태/연차
             # 분류의 판정 근거가 없으므로, 프론트에서 '미확인'으로 정직하게 표기하기 위한 플래그.

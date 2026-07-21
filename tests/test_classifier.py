@@ -260,6 +260,31 @@ class TestClassifierAndDelta(unittest.TestCase):
         # 정상 항목은 남아 있어야 한다 (과잉 삭제 방지)
         self.assertIn("재무제표 분석 역량 보유자", collected)
 
+    def test_no_fabricated_defaults_when_extraction_fails(self):
+        """추출 실패 시 그럴듯한 문구를 지어내지 않는다.
+
+        2026-07-21 실측: 자격요건 34건·우대사항 43건이 기본 문구였고, EXCEL 단독 31건 중
+        29건은 제목·본문 어디에도 엑셀 언급이 없었다. 화면에는 공고에 그렇게 적힌 것처럼
+        보였다 — 누락보다 위험한 오분류다."""
+        job = {
+            "id": "y1", "source": "gamejob", "company_name": "컴투스",
+            "title": "[컴투스] IR/공시 담당자 (주니어)",
+            "raw_html": "담당업무\n\n자격조건\n\n근무지역\n서울 > 금천구\n",
+        }
+        result = self.engine.analyze_and_classify(job)
+        self.assertEqual(result["key_requirements"], [])
+        self.assertEqual(result["preferred_skills"], [])
+        self.assertIsNone(result["tools_used"])
+        self.assertIn("명시 없음", result["ai_summary"])
+
+    def test_tools_extracted_when_evidence_exists(self):
+        """근거가 있으면 정상 추출하고, 순서는 실행마다 동일해야 한다(HTML diff 안정화)."""
+        text = "자격요건\n- SAP 및 더존 사용 경험\n- 엑셀 활용 능력"
+        first = self.engine.extract_tools_and_skills(text)
+        self.assertEqual(first, self.engine.extract_tools_and_skills(text))
+        self.assertIn("SAP", first)
+        self.assertIn("더존", first)
+
     def test_cert_and_skill_tagging(self):
         """우대 자격증 및 핵심 실무 역량 태깅 검증"""
         # CPA 및 IFRS, 연결회계 추출 검증
