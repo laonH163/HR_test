@@ -159,7 +159,7 @@ class TelegramSender:
             parts.append(", ".join(s.upper() for s in others))
         return " · ".join(parts)
 
-    def build_daily_briefing_message(self, newly_added, modified_count, closed_count, active_postings, weekly_trend=None, failed_sources=None, zero_platforms=None, known_companies=None, mass_close_held=None, source_drops=None, deadline_changes=None, closed_history=None):
+    def build_daily_briefing_message(self, newly_added, modified_count, closed_count, active_postings, weekly_trend=None, failed_sources=None, zero_platforms=None, known_companies=None, mass_close_held=None, source_drops=None, deadline_changes=None, closed_history=None, partial_sources=None):
         """당일 수집된 통계 데이터 및 공고 리스트 기반 가독성 높은 텔레그램 카드 메세지 빌딩 (중복 디듀프리케이션 포함)"""
         KST = ZoneInfo("Asia/Seoul")
         run_date_env = os.getenv('RUN_DATE_STR', '')
@@ -380,6 +380,12 @@ class TelegramSender:
         if source_drops:
             parts = [f"{str(s).upper()} {v['today']}건(평소 {v['avg']:.0f}건)" for s, v in sorted(source_drops.items())]
             health_lines.append(f" • 📉 수집량 급감: <b>{' · '.join(parts)}</b>")
+        if partial_sources:
+            # 검색 키워드 일부만 통과한 소스 — 수집은 됐지만 '다 훑었다'고 볼 수 없어
+            # 마감 판정을 보류한 상태다. 보류가 며칠 이어지면 이미 마감된 공고가
+            # 활성으로 남으므로(좀비), 반드시 눈에 보여야 한다.
+            ps = " · ".join(str(s).upper() for s in sorted(partial_sources))
+            health_lines.append(f" • ⏸ 검색 일부 실패로 마감 판정 보류: <b>{ps}</b>")
 
         if health_lines:
             msg_lines.append("🩺 <b>수집 상태 점검:</b>")

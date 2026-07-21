@@ -89,3 +89,27 @@ class TestTelegramReporter(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestPartialSourceWarningSurfaced(unittest.TestCase):
+    """검색 일부 실패로 '마감 판정 보류' 중인 소스는 브리핑에 보여야 한다.
+
+    2026-07-21 코덱스 3차 교차검토: partial_sources를 계산해 마감 보류에는 쓰면서
+    error_log·텔레그램 어디에도 노출하지 않아, 보류가 며칠 이어져 이미 마감된 공고가
+    ACTIVE로 남아도(좀비) 운영자가 알 방법이 없었다. 이 프로젝트 운영 원칙이
+    '경고 없으면 할 일 없음'이라 미노출은 곧 무한 방치를 뜻한다."""
+
+    def _build(self, **kwargs):
+        from src.reporter.telegram_sender import TelegramSender
+        return TelegramSender().build_daily_briefing_message(
+            0, 0, 0, [], None, **kwargs)
+
+    def test_partial_source_appears_in_health_section(self):
+        msg = self._build(partial_sources=["saramin"])
+        self.assertIn("마감 판정 보류", msg)
+        self.assertIn("SARAMIN", msg)
+
+    def test_no_partial_keeps_all_clear_line(self):
+        msg = self._build(partial_sources=[])
+        self.assertIn("전 소스 정상", msg)
+        self.assertNotIn("마감 판정 보류", msg)

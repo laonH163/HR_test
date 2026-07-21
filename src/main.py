@@ -278,6 +278,10 @@ def run_scraping_phase():
             error_parts.append("수집 실패 소스: " + ", ".join(sorted(set(failed_sources))))
         if zero_platforms:
             error_parts.append("0건 플랫폼(점검 필요): " + ", ".join(zero_platforms))
+        if partial_sources:
+            # 사후에 '그날 어느 소스가 부분 실패였나'를 조회할 수 있어야 한다 —
+            # 마감 보류가 며칠 이어지면 좀비 ACTIVE가 쌓이는데, 기록이 없으면 추적 불가.
+            error_parts.append("검색 일부 실패(마감 보류): " + ", ".join(sorted(partial_sources)))
         log_entry = {
             "run_date": datetime.now(KST).strftime("%Y-%m-%d"),
             "newly_added": newly_added,
@@ -359,7 +363,8 @@ def run_scraping_phase():
             mass_close_held=getattr(analyzer, "last_mass_close_held", []),
             source_drops=source_drops,
             deadline_changes=deadline_changes,
-            closed_history=closed_history
+            closed_history=closed_history,
+            partial_sources=sorted(partial_sources)
         )
 
         # 최종 메시지 봇 발송
