@@ -561,12 +561,14 @@
                     // 플랫폼 검색 소스 — 이 외(기업페이지 어댑터·자체 채용페이지)는 모두 '공식'으로 간주
                     const PLATFORM_SOURCES = ["wanted", "saramin", "jobkorea", "gamejob"];
                     const sourceRank = (src) => PLATFORM_SOURCES.includes((src || "").toLowerCase()) ? 1 : 0;
+                    // 같은 회사의 표기 차이(영문 사명 ↔ 한글 법인명) — src/utils/dedup._COMPANY_ALIASES 미러
+                    const COMPANY_ALIASES = { "nx3games": "엔엑스쓰리게임즈" };
                     const normalizeCompany = (name) => {
                         let n = (name || "").replace(/\s+/g, '').toLowerCase();
                         for (const token of ["(주)", "주식회사", "㈜", "（주）"]) {
                             n = n.split(token).join("");
                         }
-                        return n;
+                        return COMPANY_ALIASES[n] || n;
                     };
 
                     rawList.forEach(job => {
@@ -584,6 +586,9 @@
                                 if (hint.length > normComp.length) normComp = hint;
                             }
                         }
+                        // 남은 대괄호는 벗기기만(안의 낱말은 보존) — '[전략실] 회계담당자'와
+                        // '전략실 회계담당자'를 같은 키로. src/utils/dedup.content_key 미러.
+                        tit = tit.split("[").join(" ").split("]").join(" ");
                         const key = normComp + "_" + tit.replace(/\s+/g, '').toLowerCase();
 
                         if (seenKeys[key] !== undefined) {

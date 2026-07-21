@@ -82,15 +82,25 @@ class SaraminScraper:
                     if any(r["id"] == job_id for r in results):
                         continue
 
-                    # 상세 설명 가져오기
-                    detail_url = f"https://www.saramin.co.kr/zf_user/jobs/relay/view?rec_idx={saramin_id}"
+                    # 상세 설명 가져오기.
+                    # ※ relay/view(구 주소)는 상세요강이 없는 중계 페이지다 — 셀렉터가 전부
+                    #   빗나가고 body 폴백이 걸려 사람인 공통 레이아웃(전 공고 동일한 4,999자
+                    #   네비게이션)이 본문으로 저장됐다. 2026-07-21 실측으로 확인해 정규
+                    #   주소(jobs/view)로 교체. 정규 주소엔 .wrap_jv_cont에 요약표(경력·근무형태)와
+                    #   상세요강이 함께 들어 있다.
+                    detail_url = f"https://www.saramin.co.kr/zf_user/jobs/view?rec_idx={saramin_id}"
                     time.sleep(random.uniform(0.5, 1.2))
 
                     try:
                         detail_res = self.session.get(detail_url, headers=self.headers, timeout=10)
                         if detail_res.status_code == 200:
                             detail_soup = BeautifulSoup(detail_res.text, "html.parser")
-                            main_content = detail_soup.select_one(".wrap_jv_co") or detail_soup.select_one(".jv_content") or detail_soup.select_one("body")
+                            # 본문 셀렉터가 전부 빗나가면 '제목만 수집'으로 정직하게 떨어뜨린다.
+                            # body 폴백은 절대 두지 않는다 — 공통 레이아웃이 본문으로 둔갑하면
+                            # has_body가 참이 되어 화면·분류가 근거 없는 값을 사실처럼 보여준다.
+                            main_content = (detail_soup.select_one(".wrap_jv_cont")
+                                            or detail_soup.select_one(".jv_detail")
+                                            or detail_soup.select_one(".user_content"))
                             desc_text = main_content.get_text(separator="\n").strip() if main_content else title
                         else:
                             desc_text = title

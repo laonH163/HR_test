@@ -2,6 +2,17 @@ import re
 import json
 
 class HybridClassificationEngine:
+    # 수집처 상세 페이지 상단 요약표의 '경력' 라벨 + 값 (라벨과 값이 '경력'을 겹쳐 쓴다).
+    # 게임잡: "경력   경력 2년 이상   고용형태 …" / 사람인: "경력\n경력 5~12년\n학력 …"
+    _EXP_LABEL_RE = re.compile(r"경력[\s|]*경력[\s]*([^\n|]{1,24})")
+
+    # 자격요건 구역 경계 — 헤더 표기가 수집처마다 달라 변형을 함께 등재한다.
+    _REQ_START_MARKERS = ("자격요건", "자격 요건", "지원자격", "지원 자격", "필수요건", "필수 요건")
+    _REQ_END_MARKERS = ("우대사항", "우대 사항", "우대조건", "복지 및 혜택", "복리후생",
+                        "채용절차", "전형절차", "접수기간", "기타사항")
+    # 종료 마커를 못 찾았을 때의 구역 상한 (실측: 자격요건 구역은 길어야 1천자대)
+    _REQ_SECTION_MAX_CHARS = 2000
+
     def __init__(self):
         # 1. 근무형태 3단 분류 사전
         self.work_patterns = {
@@ -53,17 +64,152 @@ class HybridClassificationEngine:
         # 3. 기본값: 전면출근 (지정어가 특별히 없을 경우)
         return "전면출근"
 
+    def _match_experience(self, norm_text, allow_bare_range=False):
+        """공백 제거 텍스트에서 연차 범위를 찾는다. 못 찾으면 None(→ 다음 단계로 폴백).
+
+        allow_bare_range: '7-10년'처럼 '경력' 앵커 없이 나온 범위도 연차로 인정할지.
+        제목·'경력' 라벨 값처럼 **문맥이 이미 연차로 확정된 짧은 텍스트**에서만 켠다.
+        본문 전체에서 켜면 '계약기간 3-5년'·'사업기간 5-10년' 같은 무관한 기간까지
+        연차로 오독한다(코덱스 교차검토 지적, 2026-07-21).
+
+        반환값은 항상 튜플이거나 None이다 — (0, None)처럼 값이 0인 결과도 튜플이라
+        참이므로 호출부는 `if hit:`으로 분기해도 안전하다. 이 계약을 깨지 말 것."""
+        # 경력 무관
+        if "경력무관" in norm_text or "경력년수무관" in norm_text:
+            return 0, None
+
+        # 1) 경력 3~5년, 5년~10년 형태
+        m = re.search(r"(\d+)년[~-](\d+)년", norm_text)
+        if m:
+            rng = self._exp_range(m)
+            if rng:
+                return rng
+
+        # 1-1) 경력 1~3년차, 3-5년차 형태
+        m = re.search(r"(\d+)[~-](\d+)년차", norm_text)
+        if m:
+            rng = self._exp_range(m)
+            if rng:
+                return rng
+
+        # 1-2) '경력 7-10년'·'5~12년'처럼 앞쪽 '년'이 생략된 범위 표기.
+        #      실측(2026-07-21): 원티드 '재무회계 경력 7-10년'이 어떤 패턴에도 안 걸려
+        #      0년(경력 무관)으로 저장되고 있었다. 사람인 요약의 '경력 5~12년'도 동일.
+        #      본문에서는 반드시 '경력' 앵커를 요구한다 — 앵커 없이 훑으면 '계약기간 3-5년'
+        #      같은 무관한 기간을 연차로 읽는다.
+        patterns = [r"경력[^\d]{0,3}(\d+)[~-](\d+)년"]
+        if allow_bare_range:
+            patterns.append(r"(\d+)[~-](\d+)년")
+        for pattern in patterns:
+            m = re.search(pattern, norm_text)
+            if m:
+                rng = self._exp_range(m)
+                if rng:
+                    return rng
+
+        # 2) 3년 이상, 3년↑ 형태
+        m = re.search(r"(\d+)년(?:이상|차이상|↑)", norm_text)
+        if m:
+            return int(m.group(1)), None
+
+        # 3) 5년 이하 형태 ('↓'는 사람인 요약표의 '5년 ↓' 표기 — '이하'와 같은 뜻)
+        m = re.search(r"(\d+)년(?:이하|차이하|↓)", norm_text)
+        if m:
+            return 0, int(m.group(1))
+
+        # 3-1) "3년 전후", "3년 내외" 형태
+        m = re.search(r"(\d+)년(?:내외|전후)", norm_text)
+        if m:
+            val = int(m.group(1))
+            return max(0, val - 1), val + 1
+
+        # 4) 단순 경력 년 수 언급 (상한은 임의로 단정하지 않고 '이상'으로 처리)
+        m = re.search(r"경력(\d+)년", norm_text)
+        if m:
+            return int(m.group(1)), None
+
+        return None
+
+    @staticmethod
+    def _exp_range(match):
+        """범위 매치를 (min, max)로 환산 — 상식 밖 값은 버린다(None).
+
+        '2024-2025년 실적'처럼 연도 표기가 연차로 둔갑하는 것을 막는 상한선."""
+        low, high = int(match.group(1)), int(match.group(2))
+        if low > high or high > 40:
+            return None
+        return low, high
+
+    def _experience_label_value(self, text):
+        """수집처가 제공하는 '경력' 요약 라벨의 값 — 가장 신뢰도 높은 연차 출처.
+
+        게임잡('경력   경력 2년 이상')·사람인('경력\\n경력 5~12년') 모두 상세 페이지
+        상단 요약표에 라벨('경력')과 값('경력 N년 이상')을 나란히 싣는다. 본문 하단의
+        '이 기업의 다른 공고' 목록에는 이 이중 표기가 없어(값만 '경력 4년↑' 형태)
+        첫 매치는 항상 해당 공고 자신의 요건이 된다.
+        실측 근거(2026-07-21): 게임잡 컴투스 공고들이 본문 8,600자 이후에 붙는 타 공고
+        목록의 '4-8년차'를 읽어 IR/공시 주니어·시니어가 똑같이 4~8년으로 저장됐다."""
+        m = self._EXP_LABEL_RE.search(text or "")
+        return m.group(1) if m else None
+
+    def _requirement_section(self, text):
+        """'자격요건' 헤더 이후 ~ '우대사항/복지/전형' 이전 구간만 잘라낸다.
+
+        경력 라벨이 없는 수집처에서 본문 뒤쪽(복지·타 공고)의 연차가 섞이는 것을 막는
+        2차 방어선. 헤더를 못 찾으면 None을 돌려 전체 본문 단계로 넘긴다."""
+        if not text:
+            return None
+        start = None
+        for marker in self._REQ_START_MARKERS:
+            idx = text.find(marker)
+            if idx >= 0 and (start is None or idx < start):
+                start = idx
+        if start is None:
+            return None
+        end = len(text)
+        for marker in self._REQ_END_MARKERS:
+            idx = text.find(marker, start + 1)
+            if idx >= 0 and idx < end:
+                end = idx
+        # 종료 마커가 없으면 본문 끝까지 잡히는데, 그러면 뒤쪽 '다른 공고 목록'까지
+        # 삼켜 이 단계의 존재 의의가 사라진다. 실측상 자격요건 구역은 길어야 1천자대.
+        end = min(end, start + self._REQ_SECTION_MAX_CHARS)
+        section = text[start:end]
+        return section if section.strip() else None
+
     def extract_experience(self, text, title=None):
         """경력 연차 범위 파싱 (예: "3년 이상", "경력 5년~10년", "신입", "무관").
 
-        title이 주어지면 제목의 '신입'(단독) 신호를 본문보다 우선한다 — 본문의
-        '경력 개발 기회'·'인턴 경력 우대' 같은 문구가 신입 공고 판정을 무력화하고
-        우대사항의 연차로 오판정하는 것을 막는다. '신입/경력' 병행 제목은 기존
-        로직(숫자 범위 우선)에 맡긴다."""
+        탐색 범위를 좁은 순서대로 훑어 '본문 아무 데나 있는 숫자'를 읽는 사고를 막는다:
+        제목 → 수집처 '경력' 요약 라벨 → 자격요건 구역 → 전체 본문 → 직급 폴백.
+        (2026-07-21 교정 이전에는 전체 본문만 봤고, 그 결과 게임잡 본문 하단의 타 공고
+        연차·사람인 공통 레이아웃의 '신입' 문구를 요건으로 오독했다.)
+
+        title의 '신입'(단독) 신호는 본문보다 우선한다 — 본문의 '경력 개발 기회'·
+        '인턴 경력 우대' 같은 문구가 신입 공고 판정을 무력화하는 것을 막는다.
+        '신입/경력' 병행 제목은 기존 로직(숫자 범위 우선)에 맡긴다."""
         if title:
             norm_title = title.replace(" ", "")
             if "신입" in norm_title and "경력" not in norm_title:
                 return 0, 1
+            # 제목에 연차가 명시됐으면 본문보다 우선 — 제목은 오염될 여지가 없다
+            # (짧고 문맥이 확정적이므로 '(5~15년)'처럼 앵커 없는 범위도 인정)
+            hit = self._match_experience(norm_title, allow_bare_range=True)
+            if hit:
+                return hit
+
+        # 수집처가 구조화해 준 '경력' 요약 라벨
+        label_value = self._experience_label_value(text)
+        if label_value:
+            norm_label = label_value.replace(" ", "")
+            # 라벨 값은 '경력' 칸의 내용이 확정이므로 앵커 없는 '5~12년'도 인정
+            hit = self._match_experience(norm_label, allow_bare_range=True)
+            if hit:
+                return hit
+            # 라벨 자리의 '무관'은 경력 무관이 확정이다(사람인 '무관(신입포함)').
+            # 본문 전체에서는 '학력 무관'과 섞이므로 이 단계에서만 인정한다.
+            if "무관" in norm_label:
+                return 0, None
 
         norm_text = text.replace(" ", "")
 
@@ -71,42 +217,16 @@ class HybridClassificationEngine:
         if "신입" in norm_text and not "경력" in norm_text:
             return 0, 1
 
-        # 경력 무관
-        if "경력무관" in norm_text or "경력년수무관" in norm_text:
-            return 0, None
+        # 자격요건 구역 우선 탐색
+        section = self._requirement_section(text)
+        if section:
+            hit = self._match_experience(section.replace(" ", ""))
+            if hit:
+                return hit
 
-        # "~년차 이상" 또는 "~년차~~년차" 패턴 정규식 매칭
-        # 1) 경력 3~5년, 5년~10년 형태
-        range_match = re.search(r"(\d+)년[~-](\d+)년", norm_text)
-        if range_match:
-            return int(range_match.group(1)), int(range_match.group(2))
-
-        # 1-1) 경력 1~3년차, 3-5년차 형태
-        range_match_ch = re.search(r"(\d+)[~-](\d+)년차", norm_text)
-        if range_match_ch:
-            return int(range_match_ch.group(1)), int(range_match_ch.group(2))
-
-        # 2) 3년 이상, 3년↑ 형태
-        over_match = re.search(r"(\d+)년(?:이상|차이상|↑)", norm_text)
-        if over_match:
-            return int(over_match.group(1)), None
-
-        # 3) 5년 이하 형태
-        under_match = re.search(r"(\d+)년(?:이하|차이하)", norm_text)
-        if under_match:
-            return 0, int(under_match.group(1))
-
-        # 3-1) "3년 전후", "3년 내외" 형태
-        approx_match = re.search(r"(\d+)년(?:내외|전후)", norm_text)
-        if approx_match:
-            val = int(approx_match.group(1))
-            return max(0, val - 1), val + 1
-
-        # 4) 단순 경력 년 수 언급 (상한은 임의로 단정하지 않고 '이상'으로 처리)
-        single_match = re.search(r"경력(\d+)년", norm_text)
-        if single_match:
-            val = int(single_match.group(1))
-            return val, None
+        hit = self._match_experience(norm_text)
+        if hit:
+            return hit
 
         # 5) 직급 표현 폴백: 명시적 연차 표기가 전혀 없을 때만 직급으로 최소 연차를 추정.
         #    공백 보존 원문(text)에서 매칭하고 '급여'는 negative lookahead로 배제한다.

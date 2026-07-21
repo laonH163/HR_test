@@ -97,6 +97,85 @@ class TestClassifierAndDelta(unittest.TestCase):
         self.assertEqual(min_exp, 0)
         self.assertIsNone(max_exp)
 
+    def test_experience_scope_priority(self):
+        """연차 탐색 범위 우선순위 — 제목 → 수집처 '경력' 라벨 → 자격요건 → 전체 본문.
+
+        2026-07-21 실측 사고 재현: 게임잡 본문 뒤쪽에 붙는 '이 기업의 다른 공고' 목록의
+        연차를 요건으로 오독해, 제목이 '10년 이상'인 팀장 공고가 4~8년으로 저장됐다."""
+        # 1) 제목의 명시 연차가 본문 뒷부분의 타 공고 연차를 이긴다
+        body_with_other_postings = (
+            "담당업무\n재무관리 총괄\n\n" + ("설명 " * 800) +
+            "\n[컴투스홀딩스] 데이터분석가 (4-8년차)\n경력 4년↑\n"
+        )
+        mn, mx = self.engine.extract_experience(
+            f"[컴투스 홀딩스] 재무관리 팀장 (10년 이상)\n{body_with_other_postings}",
+            title="[컴투스 홀딩스] 재무관리 팀장 (10년 이상)")
+        self.assertEqual((mn, mx), (10, None))
+
+        # 2) 제목에 연차가 없으면 수집처 요약 라벨('경력  경력 2년 이상')을 읽는다
+        gamejob_body = (
+            "경력   경력 2년 이상       고용형태   정규직\n담당업무\nIR 공시\n"
+            + ("설명 " * 800) + "\n[컴투스홀딩스] 데이터분석가 (4-8년차)\n"
+        )
+        mn, mx = self.engine.extract_experience(
+            f"[컴투스] IR/공시 담당자 (주니어)\n{gamejob_body}",
+            title="[컴투스] IR/공시 담당자 (주니어)")
+        self.assertEqual((mn, mx), (2, None))
+
+    def test_experience_new_range_and_label_forms(self):
+        """새로 지원한 표기 — '7-10년'(앞 '년' 생략), 사람인 요약표의 '↓'/'무관'"""
+        # 1) 원티드 실측: '재무회계 경력 7-10년'이 어떤 패턴에도 안 걸려 0년으로 저장됐던 건
+        mn, mx = self.engine.extract_experience(
+            "재무담당자 (팀장급)\n자격요건\n• 재무회계 경력 7-10년 (팀장급 경력 우대)",
+            title="재무담당자 (팀장급)")
+        self.assertEqual((mn, mx), (7, 10))
+
+        # 2) 사람인 요약표 '경력 5~12년'
+        mn, mx = self.engine.extract_experience(
+            "회계 담당(대리/과장)\n경력\n경력 5~12년\n학력\n대졸(4년제) 이상",
+            title="회계 담당(대리/과장)")
+        self.assertEqual((mn, mx), (5, 12))
+
+        # 3) 사람인 요약표 '5년 ↓' = 5년 이하
+        mn, mx = self.engine.extract_experience(
+            "[재무관리본부] 회계(결산) 업무 담당자\n경력\n경력 5년 ↓\n학력\n학력무관",
+            title="[재무관리본부] 회계(결산) 업무 담당자")
+        self.assertEqual((mn, mx), (0, 5))
+
+        # 4) 라벨 자리의 '무관(신입포함)'은 경력 무관
+        mn, mx = self.engine.extract_experience(
+            "재무 정산 담당자 모집(계약직)\n경력\n경력 무관(신입포함)\n학력\n학력무관",
+            title="재무 정산 담당자 모집(계약직)")
+        self.assertEqual((mn, mx), (0, None))
+
+    def test_experience_range_rejects_non_year_numbers(self):
+        """연도·큰 수는 연차로 읽지 않는다 — 새 범위 패턴의 오탐 방지 상한(40년)"""
+        mn, mx = self.engine.extract_experience("2024-2025년 회계연도 결산 담당자 모집")
+        self.assertEqual((mn, mx), (0, None))
+
+    def test_bare_range_requires_career_anchor_in_body(self):
+        """본문의 '앞 년 생략' 범위는 '경력' 앵커가 있어야 인정 — 무관한 기간 오독 방지.
+
+        코덱스 교차검토 지적(2026-07-21): 앵커 없이 훑으면 '계약기간 3-5년'처럼 40년
+        이하라 상한 필터도 못 거르는 정상적 비(非)경력 기간을 연차로 읽는다."""
+        # 1) 본문의 무관한 기간은 연차가 아니다
+        mn, mx = self.engine.extract_experience(
+            "회계 담당자 모집\n근무조건\n계약기간 3-5년 후 정규직 전환 검토",
+            title="회계 담당자 모집")
+        self.assertEqual((mn, mx), (0, None))
+
+        # 2) '경력' 앵커가 붙으면 인정한다
+        mn, mx = self.engine.extract_experience(
+            "회계 담당자 모집\n자격요건\n관련 경력 3-5년",
+            title="회계 담당자 모집")
+        self.assertEqual((mn, mx), (3, 5))
+
+        # 3) 제목은 문맥이 확정적이므로 앵커 없이도 인정 (크래프톤 '(5~15년)' 실측)
+        mn, mx = self.engine.extract_experience(
+            "[Finance Div.] Financial Planning Team Member (5~15년)\n본문",
+            title="[Finance Div.] Financial Planning Team Member (5~15년)")
+        self.assertEqual((mn, mx), (5, 15))
+
     def test_cert_and_skill_tagging(self):
         """우대 자격증 및 핵심 실무 역량 태깅 검증"""
         # CPA 및 IFRS, 연결회계 추출 검증

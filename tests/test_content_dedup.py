@@ -22,12 +22,37 @@ class TestContentKey(unittest.TestCase):
         self.assertEqual(k1, k2)
 
     def test_non_company_prefix_not_promoted(self):
-        """'[경력]' 같은 비회사 프리픽스는 회사키로 승격하지 않고 제목에 남긴다 (펄어비스 실측)"""
+        """'[경력]' 같은 비회사 프리픽스는 회사키로 승격하지 않고 낱말을 제목에 남긴다 (펄어비스 실측).
+
+        대괄호 자체는 벗겨지지만( '[전략실]…' ↔ '전략실…' 병합용 ) 안의 낱말은 보존되므로
+        신입/경력 구분은 그대로 살아 있다."""
         k1 = content_key("펄어비스", "[경력] 내부회계 담당자 모집")
         k2 = content_key("(주)펄어비스", "[펄어비스] [경력] 내부회계 담당자 모집")
         self.assertEqual(k1, k2)
         self.assertEqual(k1[0], "펄어비스")
-        self.assertIn("[경력]", k1[1])
+        self.assertIn("경력", k1[1])
+
+    def test_bracket_word_still_distinguishes_postings(self):
+        """대괄호를 벗겨도 안의 낱말이 남아 '[신입]'과 '[경력]' 공고는 여전히 별개 키"""
+        k_new = content_key("펄어비스", "[신입] 내부회계 담당자 모집")
+        k_exp = content_key("펄어비스", "[경력] 내부회계 담당자 모집")
+        self.assertNotEqual(k_new, k_exp)
+
+    def test_nx3games_alias_and_department_prefix_merge(self):
+        """영문 사명(게임잡) ↔ 한글 법인명(잡코리아) + 부서 프리픽스 차이 병합 (2026-07-21 실측).
+
+        잡코리아는 '[NX3GAMES] 전략실 회계담당자 (주니어)', 게임잡은 '[전략실] 회계담당자 (주니어)'로
+        같은 공고를 실어 카드가 둘로 갈렸다."""
+        k1 = content_key("㈜엔엑스쓰리게임즈", "[NX3GAMES] 전략실 회계담당자 (주니어)")
+        k2 = content_key("NX3GAMES", "[전략실] 회계담당자 (주니어)")
+        self.assertEqual(k1, k2)
+        self.assertEqual(k1[0], "엔엑스쓰리게임즈")
+
+    def test_alias_does_not_merge_different_postings(self):
+        """별칭 통일이 서로 다른 직무까지 묶지는 않는다 — 오병합 방지"""
+        k1 = content_key("NX3GAMES", "[전략실] 회계담당자 (주니어)")
+        k2 = content_key("NX3GAMES", "[전략실] 회계담당자 (시니어)")
+        self.assertNotEqual(k1, k2)
 
     def test_different_company_same_title_not_merged(self):
         """회사가 다르면 제목이 같아도 다른 키 — 오병합 방지"""

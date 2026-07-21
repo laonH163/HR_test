@@ -22,13 +22,20 @@ PLATFORM_SOURCES = {"wanted", "saramin", "jobkorea", "gamejob"}
 _CORP_TOKENS = ["(주)", "주식회사", "㈜", "（주）"]
 _BRACKET_PREFIX_RE = re.compile(r"^\[([^\[\]]{1,30})\]\s*")
 
+# 같은 회사를 수집처마다 다른 표기로 등록해 키가 어긋나는 사례 — 영문 사명 ↔ 한글 법인명.
+# 실측(2026-07-21): 잡코리아·사람인은 '㈜엔엑스쓰리게임즈', 게임잡은 'NX3GAMES'로 실어
+# 같은 공고가 별도 카드로 노출됐다. 오병합 위험이 있으므로 실제로 확인된 쌍만 등재한다.
+_COMPANY_ALIASES = {
+    "nx3games": "엔엑스쓰리게임즈",
+}
+
 
 def normalize_company(name):
-    """회사명 정규화 — 공백·법인 표기 제거 + 소문자화 (중복 판별 키용)"""
+    """회사명 정규화 — 공백·법인 표기 제거 + 소문자화 + 별칭 통일 (중복 판별 키용)"""
     norm = "".join((name or "").split()).lower()
     for token in _CORP_TOKENS:
         norm = norm.replace(token, "")
-    return norm
+    return _COMPANY_ALIASES.get(norm, norm)
 
 
 def source_rank(source):
@@ -84,7 +91,13 @@ def content_key(company_name, title):
     더 긴 쪽을 회사키로 승격하고 제목키에서 프리픽스를 제거한다.
     — 실측(2026-07-08): 컴투스 기업페이지(회사명 '컴투스', 제목 '[컴투스홀딩스] 재무관리 팀장')와
       게임잡(회사명 '컴투스 홀딩스', 프리픽스 없는 제목)이 같은 공고인데 키가 어긋나 이중 표시됨.
-    포함관계가 아닌 '[경력]' '[신입]' 같은 프리픽스는 그대로 두어 오병합을 막는다."""
+    포함관계가 아닌 '[경력]' '[신입]' 같은 프리픽스는 그대로 두어 오병합을 막는다.
+
+    남은 대괄호는 '지우지 않고 벗기기만' 한다 — 괄호쌍만 없애고 안의 낱말은 남긴다.
+    실측(2026-07-21): 잡코리아 '[NX3GAMES] 전략실 회계담당자 (주니어)'와 게임잡
+    '[전략실] 회계담당자 (주니어)'가 같은 공고인데, 한쪽만 회사 프리픽스가 벗겨져
+    '전략실…' vs '[전략실]…'로 키가 어긋났다. 괄호만 벗기면 두 제목이 같아진다.
+    낱말을 남기므로 '[신입] 회계담당자'와 '[경력] 회계담당자'는 여전히 구분된다."""
     comp = normalize_company(company_name)
     title = (title or "").strip()
     m = _BRACKET_PREFIX_RE.match(title)
@@ -96,4 +109,5 @@ def content_key(company_name, title):
                 title = stripped
             if len(hint) > len(comp):
                 comp = hint
+    title = title.replace("[", " ").replace("]", " ")
     return comp, "".join(title.split()).lower()
