@@ -29,8 +29,14 @@ class TestClassifierAndDelta(unittest.TestCase):
         self.assertEqual(self.engine.classify_work_type("주 2회 하이브리드 재택근무 제공"), "하이브리드 (주2~3회 재택)")
         self.assertEqual(self.engine.classify_work_type("본 공고는 일주일에 3일 재택근무를 섞어서 일합니다."), "하이브리드 (주2~3회 재택)")
 
-        # 3) 전면출근 케이스 (기본값)
+        # 3) 전면출근은 '명시된 경우'에만 확정한다
         self.assertEqual(self.engine.classify_work_type("판교 사무실로 매일 출근합니다."), "전면출근")
+        self.assertEqual(self.engine.classify_work_type("본 포지션은 전면 출근 근무입니다."), "전면출근")
+
+        # 4) 근거가 없으면 '전면출근'으로 단정하지 않는다 — 기본값이 사실로 둔갑하던 것 교정
+        #    (2026-07-21 실측: 활성 60건 전부가 근거 없이 '전면출근'이었다)
+        self.assertEqual(
+            self.engine.classify_work_type("회계 결산 및 세무 신고 업무를 담당합니다."), "미확인")
 
     def test_experience_extraction(self):
         """경력 요구 연차 추출 로직 검증"""
@@ -175,6 +181,53 @@ class TestClassifierAndDelta(unittest.TestCase):
             "[Finance Div.] Financial Planning Team Member (5~15년)\n본문",
             title="[Finance Div.] Financial Planning Team Member (5~15년)")
         self.assertEqual((mn, mx), (5, 15))
+
+    def test_site_tail_does_not_pollute_tags(self):
+        """사이트 꼬리(면책문구·기업뉴스·타 공고 목록)의 단어가 태그가 되면 안 된다.
+
+        2026-07-21 실측: 사람인 기업정보 구역의 "정확한 정보는 기업공시 시스템 또는 …"
+        면책문구 때문에 활성 13건 전부가 '공시' 태그를 받았고, 게임잡은 상세 페이지에
+        딸려오는 '기업뉴스'의 ESG 공시 기사 때문에 결산 공고까지 '공시'가 붙었다."""
+        job = {
+            "id": "saramin_1", "source": "saramin", "company_name": "웹젠",
+            "title": "[웹젠] 자금(계약직)(경력)",
+            "raw_html": (
+                "상세요강\n주요업무\n- 일계표 작성 및 일일 마감\n자격요건\n- 관련 경력 3년 이하\n"
+                "기업정보\n실시간 정보와 상이할 수 있으므로, 정확한 정보는 기업공시 시스템 또는 "
+                "해당 기업의 홈페이지 등을 통해 재차 확인하시기 바랍니다."
+            ),
+        }
+        result = self.engine.analyze_and_classify(job)
+        self.assertNotIn("공시", result["preferred_skills_tags"])
+
+        # 게임잡 기업뉴스 블록도 마찬가지
+        job2 = dict(job, id="gamejob_1", source="gamejob", title="[컴투스] 별도 결산 담당자 (4-8년)",
+                    raw_html=("담당업무\n- 별도 결산\n기업뉴스\n더보기\nAI 활용한 게임업계 ESG 전략은?\n"
+                              "게임업체들이 지속가능 경영(ESG) 공시 의무화를 수 년 앞두고 보고서를 발간했다."))
+        result2 = self.engine.analyze_and_classify(job2)
+        self.assertNotIn("공시", result2["preferred_skills_tags"])
+
+        # 제목이 실제 공시 직무면 태그는 유지돼야 한다 (과잉 제거 방지)
+        job3 = dict(job, id="com2us_1", source="com2us", title="[컴투스] IR/공시 담당자 (시니어)",
+                    raw_html="[컴투스] IR/공시 담당자 (시니어)")
+        self.assertIn("공시", self.engine.analyze_and_classify(job3)["preferred_skills_tags"])
+
+    def test_benefits_do_not_leak_into_preferred_skills(self):
+        """'우대사항' 수집이 복리후생 섹션에서 멈춰야 한다 (2026-07-21 실측 5건 누수)."""
+        job = {
+            "id": "saramin_2", "source": "saramin", "company_name": "시프트업",
+            "title": "[시프트업] 경리/회계 담당자",
+            "raw_html": (
+                "자격요건\n- 회계 실무 경력 보유자\n"
+                "우대사항\n- 더존 사용 경험이 있는 분\n"
+                "복지 및 혜택\n- 급여제도 : 퇴직연금, 인센티브제, 4대 보험\n"
+                "- 출퇴근 : 차량유류비지급, 야간교통비지급\n"
+            ),
+        }
+        skills = self.engine.analyze_and_classify(job)["preferred_skills"]
+        self.assertTrue(any("더존" in s for s in skills), skills)
+        for banned in ("급여제도", "출퇴근", "퇴직연금"):
+            self.assertFalse(any(banned in s for s in skills), f"{banned} 누수: {skills}")
 
     def test_cert_and_skill_tagging(self):
         """우대 자격증 및 핵심 실무 역량 태깅 검증"""

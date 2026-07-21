@@ -182,7 +182,7 @@
                         <option value="풀재택">풀재택</option>
                         <option value="하이브리드 (주2~3회 재택)">하이브리드</option>
                         <option value="전면출근">전면출근</option>
-                        <option value="미확인">미확인 (본문 미수집)</option>
+                        <option value="미확인">미확인 (재택/출근 언급 없음)</option>
                     </select>
                 </div>
                 <!-- Personal Filters (Bookmark / Application State) -->
@@ -571,6 +571,18 @@
                         return COMPANY_ALIASES[n] || n;
                     };
 
+                    // 병합 시 '본문 있는 쪽'에서 가져올 분류 필드 — 식별/링크(회사명·URL·소스)는
+                    // 공식 소스 값을 유지하고, 본문에서 유도된 값만 승계한다.
+                    const CLASSIFICATION_FIELDS = [
+                        "min_experience", "max_experience", "work_type", "salary_min", "salary_max",
+                        "primary_category", "key_requirements", "preferred_skills", "tools_used",
+                        "ai_summary", "preferred_certifications", "preferred_skills_tags"
+                    ];
+                    const adoptClassification = (target, donor) => {
+                        CLASSIFICATION_FIELDS.forEach(f => { target[f] = donor[f]; });
+                        target.has_body = true;   // 분류 근거가 실제로 존재함을 표기
+                    };
+
                     rawList.forEach(job => {
                         // 중복 판별 정규화 키 수립 — '[컴투스홀딩스]'처럼 회사명과 포함관계인
                         // 제목 프리픽스는 회사키로 승격하고 제목키에서 제거 (교차 소스 병합용).
@@ -601,11 +613,21 @@
                                     url: job.origin_url
                                 });
                             }
-                            // 공식 소스가 뒤에 왔으면 대표 카드(회사명·지원하기 링크)를 공식 쪽으로 교체
+                            // 공식 소스가 뒤에 왔으면 대표 카드(회사명·지원하기 링크)를 공식 쪽으로 교체.
+                            // 단 분류값(경력·근무형태·태그)은 '본문을 확보한 쪽'을 남긴다 —
+                            // 공식 어댑터가 제목만 수집한 공고(컴투스·위메이드 등 20자대)를
+                            // 통째로 대표로 삼으면, 본문 기반으로 제대로 분류된 플랫폼 값을
+                            // 버리고 '경력 무관 · 미확인'이 화면에 뜬다(2026-07-21 실측 5건).
                             if (sourceRank(job.source) < sourceRank(existingJob.source)) {
                                 const merged = Object.assign({}, job);
                                 merged.sources = existingJob.sources;
+                                if (existingJob.has_body && !job.has_body) {
+                                    adoptClassification(merged, existingJob);
+                                }
                                 deduped[existingIdx] = merged;
+                            } else if (job.has_body && !existingJob.has_body) {
+                                // 대표는 그대로 두고 분류값만 본문 있는 쪽에서 승계
+                                adoptClassification(existingJob, job);
                             }
                         } else {
                             // 신규 등록

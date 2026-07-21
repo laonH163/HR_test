@@ -13,11 +13,34 @@ class HybridClassificationEngine:
     # 종료 마커를 못 찾았을 때의 구역 상한 (실측: 자격요건 구역은 길어야 1천자대)
     _REQ_SECTION_MAX_CHARS = 2000
 
+    # 공고 본문이 끝나고 '사이트 꼬리'가 시작되는 지점을 알리는 문구.
+    # 태그·자격증 추출은 이 앞까지만 본다. 실측(2026-07-21):
+    #  - 사람인: 기업정보 구역의 "정확한 정보는 기업공시 시스템 또는 …" 면책문구가
+    #    활성 13건 전부에 '공시' 태그를 붙였다.
+    #  - 게임잡: 저작권 문구 뒤 '…에서 진행중인 채용' 타 공고 목록에 섞인
+    #    'IR/공시 담당자' 제목이 무관한 회계 공고에 '공시'를 붙였다.
+    # 섹션 헤더(자격요건 등)로 구간을 오리는 방식은 헤더가 탭 라벨로 여러 번 나와
+    # 본문이 잘게 찢기고 정상 태그(담당업무의 '세무조사', 게임잡 키워드의 'K-IFRS')까지
+    # 잃었다. 그래서 '꼬리만 잘라내는' 방식으로 간다 — 아래 문구들은 JD 본문에는
+    # 사실상 등장하지 않아 오탐 위험이 낮다.
+    #  - 게임잡은 상세 페이지에 '기업뉴스' 블록까지 실어, "게임업체들이 지속가능 경영(ESG)
+    #    공시 의무화를…" 같은 기사 문장이 무관한 결산 공고에 '공시' 태그를 붙였다.
+    _SITE_TAIL_MARKERS = (
+        "저작권자", "무단전재", "진행중인 채용", "이 기업의 다른 공고", "기업뉴스",
+        "정확한 정보는 기업공시", "실시간 정보와 상이할 수 있", "면접후기",
+        "에서 게재한 자료에 대한 오류",
+    )
+
     def __init__(self):
         # 1. 근무형태 3단 분류 사전
         self.work_patterns = {
             "풀재택": [r"풀재택", r"전면재택", r"100%\s*(재택|리모트|원격)", r"상시재택", r"완전재택", r"완전\s*리모트", r"상시\s*리모트"],
-            "하이브리드 (주2~3회 재택)": [r"하이브리드", r"주\s*\d\s*(회|일)\s*재택", r"주\s*\d\s*(회|일)\s*리모트", r"일주일에\s*\d\s*(회|일)\s*재택", r"부분\s*재택", r"재택\s*혼용", r"리모트\s*근무", r"재택\s*가능"]
+            "하이브리드 (주2~3회 재택)": [r"하이브리드", r"주\s*\d\s*(회|일)\s*재택", r"주\s*\d\s*(회|일)\s*리모트", r"일주일에\s*\d\s*(회|일)\s*재택", r"부분\s*재택", r"재택\s*혼용", r"리모트\s*근무", r"재택\s*가능"],
+            # 출근 근무를 '명시'한 표현만. 근무지 주소·'출근시간' 같은 일반 문구는
+            # 어느 공고에나 있어 근거가 못 되므로 넣지 않는다.
+            "전면출근": [r"전면\s*출근", r"사무실.{0,10}출근", r"오피스.{0,10}출근",
+                     r"출근\s*필수", r"매일\s*출근", r"상주\s*근무", r"전\s*직원\s*출근",
+                     r"재택\s*(근무)?\s*(는)?\s*(없|불가|미실시|미운영)"]
         }
 
         # 2. 기업 규모 매타 사전 (매출 규모 억 단위, 사원수 명 단위 / 주요 게임사 데이터 하이브리드 기본값 탑재)
@@ -48,7 +71,12 @@ class HybridClassificationEngine:
         }
 
     def classify_work_type(self, text):
-        """본문 텍스트 내 키워드를 파싱하여 근무 형태 자동 분류"""
+        """본문 텍스트 내 키워드를 파싱하여 근무 형태 자동 분류.
+
+        근거가 없으면 '전면출근'이 아니라 '미확인'을 돌려준다. 이전에는 재택 키워드가
+        없으면 무조건 '전면출근'을 반환해, 실측상 활성 60건 전부가 '전면출근'으로
+        표시됐다 — 판정이 아니라 기본값이 사실처럼 보인 것이다(2026-07-21 교정).
+        대시보드는 이미 '미확인'을 필터·회색 표기로 지원한다."""
         norm_text = text.lower()
 
         # 1. 풀재택 검사
@@ -61,8 +89,13 @@ class HybridClassificationEngine:
             if re.search(pattern, norm_text):
                 return "하이브리드 (주2~3회 재택)"
 
-        # 3. 기본값: 전면출근 (지정어가 특별히 없을 경우)
-        return "전면출근"
+        # 3. 출근 근무를 명시한 경우에만 '전면출근'으로 확정
+        for pattern in self.work_patterns["전면출근"]:
+            if re.search(pattern, norm_text):
+                return "전면출근"
+
+        # 4. 근거 없음 — 단정하지 않는다
+        return "미확인"
 
     def _match_experience(self, norm_text, allow_bare_range=False):
         """공백 제거 텍스트에서 연차 범위를 찾는다. 못 찾으면 None(→ 다음 단계로 폴백).
@@ -257,6 +290,20 @@ class HybridClassificationEngine:
         # 3) 회사 내규에 따름 등 연봉 안 써진 경우가 대다수이므로 기본값 NULL 리턴
         return None, None
 
+    def strip_site_tail(self, text):
+        """공고 본문 뒤에 붙는 '사이트 꼬리'(저작권 문구·면책조항·타 공고 목록)를 잘라낸다.
+
+        머리(요약표·키워드·담당업무)는 그대로 두므로 정상 신호를 잃지 않는다.
+        꼬리 문구를 못 찾으면 원문 그대로 돌려준다."""
+        if not text:
+            return text
+        cut = len(text)
+        for marker in self._SITE_TAIL_MARKERS:
+            idx = text.find(marker)
+            if 0 <= idx < cut:
+                cut = idx
+        return text[:cut]
+
     def extract_tools_and_skills(self, text):
         """본문에서 세무/회계/재무 관련 전용 도구(ERP) 및 스킬 키워드 추출"""
         norm_text = text.lower()
@@ -396,6 +443,14 @@ class HybridClassificationEngine:
             elif any(h in line_strip for h in ["우대사항", "우대 조건", "이런 분이면 더 좋습니다", "우대 요건"]):
                 current_session = "pref"
                 continue
+            # 복리후생·근무조건·전형 섹션이 시작되면 수집을 멈춘다. 없으면 '우대사항'이
+            # 본문 끝까지 이어져 '급여제도 : 퇴직연금, 인센티브제'·'출퇴근 : 차량유류비'
+            # 같은 복지 항목이 우대사항으로 저장된다(2026-07-21 실측 5건).
+            elif any(h in line_strip for h in ["근무조건", "근무 조건", "복지 및 혜택", "복리후생",
+                                               "복지혜택", "채용절차", "전형절차", "접수기간",
+                                               "제출서류", "유의사항", "기업정보", "기타사항"]):
+                current_session = "none"
+                continue
 
             # 목록 형태 추출 (- 또는 * 또는 숫자)
             if line_strip.startswith(("-", "*", "•", "1.", "2.", "3.", "4.", "5.")):
@@ -416,7 +471,9 @@ class HybridClassificationEngine:
         preferred_certifications = []
         preferred_skills_tags = []
 
-        norm_text_lower = analysis_text.lower()
+        # 태그·자격증은 사이트 꼬리를 잘라낸 본문에서만 뽑는다 — 면책문구("정확한 정보는
+        # 기업공시 시스템…")나 뒤에 붙는 타 공고 목록의 단어가 태그로 둔갑하는 것을 막는다.
+        norm_text_lower = f"{title}\n{self.strip_site_tail(raw_text)}".lower()
 
         # 9-1. 자격증 사전식 정밀 추출
         certs_dict = {
