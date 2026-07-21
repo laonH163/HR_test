@@ -146,3 +146,26 @@ class TestScraperAndDatabase(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestShiftupPostedAtNormalization(unittest.TestCase):
+    """시프트업 채용 API가 등록일을 Unix timestamp로 주는 경우의 정규화.
+
+    2026-07-21 코덱스 교차검토: shiftup_469.posted_at이 '1784122620'으로 저장돼 있어
+    텔레그램 '오늘 새로 등록'(posted_at == 실행일) 판정에 영원히 안 걸리고,
+    posted_at 문자열 정렬도 어긋났다."""
+
+    def test_unix_timestamp_becomes_date(self):
+        from src.scraper.company_scrapers import _normalize_posted_at
+        self.assertEqual(_normalize_posted_at("1784122620"), "2026-07-15")
+
+    def test_normal_forms_preserved(self):
+        from src.scraper.company_scrapers import _normalize_posted_at
+        self.assertEqual(_normalize_posted_at("2026-07-15 09:00:00"), "2026-07-15")
+        self.assertEqual(_normalize_posted_at("2026-07-15"), "2026-07-15")
+
+    def test_blank_falls_back_to_today(self):
+        from src.scraper.company_scrapers import _normalize_posted_at
+        from src.utils.timeutil import today_kst_str
+        self.assertEqual(_normalize_posted_at(""), today_kst_str())
+        self.assertEqual(_normalize_posted_at(None), today_kst_str())

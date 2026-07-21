@@ -139,6 +139,11 @@ class SaraminScraper:
             raise RuntimeError(f"사람인 수집 연결 완전히 실패 (IP 차단/WAF): {', '.join(set(failed_errors))}")
 
         self.is_last_run_success = True
+        # [부분 실패 표시] 키워드 4종 중 일부만 통과했으면 '이 소스를 오늘 다 훑었다'고
+        # 볼 수 없다. 그대로 성공 처리하면 delta_analyzer가 소스를 신뢰해, 막힌 키워드로만
+        # 잡히던 기존 활성 공고를 오늘 결과에 없다는 이유로 즉시 CLOSED 처리한다
+        # (2026-07-21 코덱스 교차검토 지적). 마감 판정만 보류시키고 수집분은 그대로 쓴다.
+        self.is_last_run_partial = bool(failed_errors)
         unique_postings = {}
         for item in results:
             unique_postings[item["id"]] = item

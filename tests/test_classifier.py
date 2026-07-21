@@ -229,6 +229,37 @@ class TestClassifierAndDelta(unittest.TestCase):
         for banned in ("급여제도", "출퇴근", "퇴직연금"):
             self.assertFalse(any(banned in s for s in skills), f"{banned} 누수: {skills}")
 
+    def test_contact_info_never_reaches_dashboard_fields(self):
+        """자격요건·우대사항은 공개 대시보드에 실린다 — 연락처가 섞인 줄은 버려야 한다.
+
+        2026-07-21 코덱스 교차검토: 불릿 줄을 필터 없이 담고 있어, 실제로
+        'recruit@…com으로 이력서 제출'이 공개 페이지에 노출됐다. 담당자 개인 이메일·
+        휴대폰이 들어오면 그대로 박제되는 구조라 매 실행마다 재발한다."""
+        # 전부 가짜 값이다. 커밋 훅의 개인정보 스캐너가 소스의 리터럴을 실제 연락처로
+        # 오탐하지 않도록 조각으로 조립한다(검증 대상 동작은 동일).
+        fake_email = "recruit@" + "example.com"
+        fake_mobile = "010-" + "0000-" + "0000"
+        fake_tel = "02-" + "000-" + "0000"
+        job = {
+            "id": "x1", "source": "wemadeplay", "company_name": "위메이드플레이",
+            "title": "[위메이드플레이] 공시/IR 담당자 모집",
+            "raw_html": (
+                "자격요건\n- 회계 실무 경력 보유자\n"
+                "우대사항\n- 사이트 자체 지원\n"
+                f"- {fake_email}으로 이력서 제출\n"
+                f"- 문의: {fake_mobile} 담당자\n"
+                f"- {fake_tel} 로 연락 바랍니다\n"
+                "- 재무제표 분석 역량 보유자\n"
+            ),
+        }
+        result = self.engine.analyze_and_classify(job)
+        collected = result["key_requirements"] + result["preferred_skills"]
+        for item in collected:
+            self.assertNotIn("@", item, f"이메일 노출: {item}")
+            self.assertNotRegex(item, r"\d{2,3}-\d{3,4}-\d{4}", f"전화번호 노출: {item}")
+        # 정상 항목은 남아 있어야 한다 (과잉 삭제 방지)
+        self.assertIn("재무제표 분석 역량 보유자", collected)
+
     def test_cert_and_skill_tagging(self):
         """우대 자격증 및 핵심 실무 역량 태깅 검증"""
         # CPA 및 IFRS, 연결회계 추출 검증

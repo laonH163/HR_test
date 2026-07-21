@@ -2,6 +2,14 @@ import re
 import json
 
 class HybridClassificationEngine:
+    # 대시보드에 실리는 자격요건·우대사항 줄에서 걸러낼 연락처 패턴
+    # (이메일 / 휴대폰 / 유선번호). 공개 페이지 노출을 원천 차단한다.
+    _CONTACT_RE = re.compile(
+        r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"
+        r"|01[0-9][-.\s]?\d{3,4}[-.\s]?\d{4}"
+        r"|0\d{1,2}[-.\s]\d{3,4}[-.\s]\d{4}"
+    )
+
     # 수집처 상세 페이지 상단 요약표의 '경력' 라벨 + 값 (라벨과 값이 '경력'을 겹쳐 쓴다).
     # 게임잡: "경력   경력 2년 이상   고용형태 …" / 사람인: "경력\n경력 5~12년\n학력 …"
     _EXP_LABEL_RE = re.compile(r"경력[\s|]*경력[\s]*([^\n|]{1,24})")
@@ -455,6 +463,11 @@ class HybridClassificationEngine:
             # 목록 형태 추출 (- 또는 * 또는 숫자)
             if line_strip.startswith(("-", "*", "•", "1.", "2.", "3.", "4.", "5.")):
                 clean_line = re.sub(r"^[-*•\s\d.]+", "", line_strip).strip()
+                # [개인정보 차단] 이 두 리스트는 공개 GitHub Pages 대시보드에 그대로 실린다.
+                # 공고 본문의 '○○@회사.com으로 이력서 제출'·담당자 연락처가 불릿으로 들어오면
+                # 그대로 박제되므로 연락처가 섞인 줄은 통째로 버린다(2026-07-21 코덱스 지적).
+                if self._CONTACT_RE.search(clean_line):
+                    continue
                 if len(clean_line) > 5 and len(clean_line) < 100:
                     if current_session == "req" and len(key_requirements) < 5:
                         key_requirements.append(clean_line)

@@ -6,6 +6,28 @@ from src.utils.http import make_session
 from src.utils.timeutil import now_kst_str, today_kst_str
 
 
+def _normalize_posted_at(wdate):
+    """시프트업 채용 API의 wdate를 'YYYY-MM-DD'로 정규화.
+
+    이 API는 등록일을 Unix timestamp 문자열('1784122620')로 주기도 한다. 그대로 저장하면
+    posted_at이 날짜가 아니게 되어 ① 텔레그램 '오늘 새로 등록' 판정(posted_at == 실행일)에
+    영원히 안 걸리고 ② 대시보드의 posted_at 문자열 정렬이 어긋난다
+    (2026-07-21 코덱스 교차검토 지적 — 실제로 shiftup_469가 이 상태였다)."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    raw = str(wdate or "").strip()
+    if not raw:
+        return today_kst_str()
+    head = raw.split(" ")[0]
+    if head.isdigit() and len(head) >= 9:  # 초 단위 Unix timestamp
+        try:
+            return datetime.fromtimestamp(int(head), ZoneInfo("Asia/Seoul")).strftime("%Y-%m-%d")
+        except (ValueError, OSError, OverflowError):
+            return today_kst_str()
+    return head or today_kst_str()
+
+
 class CompanyScrapers:
     """게임사 공식 채용 수집 진입점.
 
@@ -62,7 +84,7 @@ class CompanyScrapers:
                         "title": title,
                         "origin_url": "https://shiftup.co.kr/recruit/recruit.php",
                         "location": "서울 서초구",
-                        "posted_at": job.get("wdate", today_kst_str()).split(" ")[0],
+                        "posted_at": _normalize_posted_at(job.get("wdate")),
                         "status": "ACTIVE",
                         "raw_html": f"경력 요건: {experience_str}\n\n상세 정보:\n{raw_desc}",
                         "first_seen_at": now_kst_str(),

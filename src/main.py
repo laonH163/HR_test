@@ -137,6 +137,19 @@ def run_scraping_phase():
             if getattr(adapter, "is_last_run_success", False):
                 successful_sources.add(adapter.source)
 
+    # 8-2c. [부분 실패 소스] — 검색 키워드 일부만 통과한 플랫폼.
+    #  '성공'으로 넘기면 delta_analyzer가 '오늘 이 소스를 다 훑었다'고 신뢰해, 막힌 키워드로만
+    #  잡히던 기존 활성 공고를 오늘 결과에 없다는 이유로 즉시 마감 처리한다. 0건 가드는
+    #  '수집 0건'만 잡으므로 키워드 1개라도 통과하면 그 방어선을 그냥 지나간다
+    #  (2026-07-21 코덱스 교차검토 지적). 수집분은 그대로 쓰되 마감 판정만 보류시킨다.
+    partial_sources = set()
+    for name, scraper in [("wanted", wanted), ("saramin", saramin),
+                          ("jobkorea", jobkorea), ("gamejob", gamejob)]:
+        if getattr(scraper, "is_last_run_success", False) and getattr(scraper, "is_last_run_partial", False):
+            partial_sources.add(name)
+    if partial_sources:
+        print(f"    [HOLD] 검색 일부만 성공한 소스 — 마감 판정 보류: {', '.join(sorted(partial_sources))}")
+
     # 8-2b. [실패 소스 집계] — 재시도 소진 후에도 실패한 소스를 로그·알림으로 가시화
     failed_sources = []
     for name, scraper in [("wanted", wanted), ("saramin", saramin),
@@ -248,7 +261,8 @@ def run_scraping_phase():
     try:
         if today_ids:
             closed_count, closed_details = analyzer.analyze_closed_postings(
-                today_ids, successful_sources, suspect_sources=set(zero_platforms),
+                today_ids, successful_sources,
+                suspect_sources=set(zero_platforms) | partial_sources,
                 collected_counts=dict(source_counts))
             for closed in closed_details:
                 print(f"    -> 마감 감지 완료: [{closed['company_name']}] {closed['title']}")
