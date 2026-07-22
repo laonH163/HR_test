@@ -185,14 +185,26 @@ def run_scraping_phase():
     retry_marker_ok = True
     try:
         if retry_targets:
-            with open(failed_marker, "w", encoding="utf-8") as f:
+            # 임시 파일에 다 쓴 뒤 원자적으로 교체한다. 곧바로 최종 경로에 쓰다가 중간에
+            # 실패하면 '내용이 일부 남은 마커'가 생겨, 1차가 직접 발송하는데 2차도 예약돼
+            # 브리핑이 두 통 간다(코덱스 지적).
+            tmp_marker = failed_marker + ".tmp"
+            with open(tmp_marker, "w", encoding="utf-8") as f:
                 f.write("\n".join(retry_targets) + "\n")
+            os.replace(tmp_marker, failed_marker)
         elif os.path.exists(failed_marker):
             os.remove(failed_marker)
     except Exception as e:
         retry_marker_ok = False
         print(f"    [WARN] 실패 마커 기록 실패 — 2차 실행 예약 불가로 보고 이번 실행이 "
               f"직접 브리핑을 발송한다: {e}", file=sys.stderr)
+        # 반쯤 남은 마커가 2차를 부르면 중복 발송이 되므로 최선 노력으로 지운다
+        for leftover in (failed_marker + ".tmp", failed_marker):
+            try:
+                if os.path.exists(leftover):
+                    os.remove(leftover)
+            except Exception:
+                pass
 
     # 8-2c. [잡코리아 GI 중복 병합] — 검색·기업페이지 이중 수집분을 DB 적재 전에 정리
     all_postings = dedupe_jobkorea_gi(all_postings)
@@ -240,6 +252,10 @@ def run_scraping_phase():
     print("\n[-] SQLite 데이터베이스 마스터 적재 및 정밀 분류 가동 중...")
     newly_added = 0
     modified_count = 0
+    db_load_failures = 0
+    # 파이프라인 필수 단계가 조용히 실패하면(예외를 출력만 하고 계속 진행) 잡은 성공으로
+    # 끝나 크래시 알림도 안 뜬다. 실패한 단계를 모아 🩺 수집 상태에 노출한다(코덱스 지적).
+    pipeline_errors = []
     today_ids = set()
     deadline_changes = []  # 마감일 연장/단축 상세 (텔레그램 '마감일 변경' 섹션용)
 
@@ -268,8 +284,15 @@ def run_scraping_phase():
             db_manager.upsert_job_category(category_data)
 
         except Exception as e:
+            # 여기서 삼키면 '수집은 됐는데 저장은 하나도 안 된' 상태가 정상처럼 보인다.
+            # source_counts는 적재 전 all_postings로 세므로 0건 경고도 안 뜨고, 알려진
+            # 차단은 '복구됐다'고까지 판단한다(코덱스 지적) → 건수를 세어 브리핑에 노출한다.
+            db_load_failures += 1
             print(f"    [ERR] DB 적재 및 분류 에러 ({posting['id']}): {e}", file=sys.stderr)
             traceback.print_exc()
+
+    if db_load_failures:
+        pipeline_errors.append(f"DB 적재/분류 실패 {db_load_failures}건")
 
     # 10. Delta Analyzer 연동 (마감 CLOSED 상태 갱신)
     #     0건 플랫폼은 검색 오동작 의심 소스로 전달 — 해당 소스 공고의 마감 오판(플랩)을 막는다.
@@ -285,6 +308,9 @@ def run_scraping_phase():
                 print(f"    -> 마감 감지 완료: [{closed['company_name']}] {closed['title']}")
         print(f"    -> 마감 공고 처리 결과: 총 {closed_count} 건 종료 감지")
     except Exception as e:
+        # 마감 판정이 통째로 안 돌면 이미 마감된 공고가 계속 활성으로 남는다(좀비).
+        # 잡은 성공으로 끝나므로 여기서 알리지 않으면 아무도 모른다(코덱스 지적).
+        pipeline_errors.append("마감 판정(Delta) 실패")
         print(f"    [ERR] Delta 분석 실패: {e}", file=sys.stderr)
 
     # 11. 실행 이력 로그 수립 — 실패 소스가 있으면 error_log에 기록해 무음 실패를 남기지 않는다.
@@ -326,6 +352,8 @@ def run_scraping_phase():
         total_html_jobs = reporter.generate_dashboard(closed_history=closed_history)
         print(f"    -> HTML 대시보드 빌드 성공: 총 {total_html_jobs}건 활성 적재")
     except Exception as e:
+        # 대시보드가 안 갱신되면 DB와 화면이 어긋난 채로 브리핑은 계속 링크를 안내한다.
+        pipeline_errors.append("대시보드 생성 실패")
         print(f"    [ERR] HTML 대시보드 생성 실패: {e}", file=sys.stderr)
 
     # 13. [Milestone 4] 프라이빗 텔레그램 데일리 요약 발송 가동
@@ -407,10 +435,18 @@ def run_scraping_phase():
         })
     if known_blocked_notes:
         # ※ f-string 안에 같은 따옴표를 중첩하면 Python 3.11에서 SyntaxError다(CI가 3.11)
-        summary = ", ".join("{}({}일째, 활성 {}건)".format(
-            n["source"], n["days"], "?" if n["active_count"] is None else n["active_count"])
-            for n in known_blocked_notes)
-        print(f"    [INFO] 알려진 차단(경고 아님): {summary}")
+        # ※ stale(경고 승격)인 항목까지 '경고 아님'으로 찍으면 로그로 상태를 진단할 때
+        #   실제와 반대로 보인다(코덱스 지적) — 두 부류를 나눠서 출력한다.
+        def _fmt(n):
+            return "{}({}일째, 활성 {}건)".format(
+                n["source"], n["days"], "?" if n["active_count"] is None else n["active_count"])
+        info_notes = [n for n in known_blocked_notes if not n["stale"]]
+        stale_notes = [n for n in known_blocked_notes if n["stale"]]
+        if info_notes:
+            print(f"    [INFO] 알려진 차단(경고 아님): {', '.join(_fmt(n) for n in info_notes)}")
+        if stale_notes:
+            print(f"    [WARN] 알려진 차단 장기화 — 수동 확인 필요: "
+                  f"{', '.join(_fmt(n) for n in stale_notes)}", file=sys.stderr)
 
     # 알려진 차단 소스가 다시 수집되면 표에서 지워야 하므로 눈에 띄게 알린다(자동 복구 감지).
     # 판정 기준은 '오늘 실제로 공고를 가져왔는가'다 — 접속 성공만으로 복구라고 하면
@@ -420,9 +456,15 @@ def run_scraping_phase():
         try:
             if db_manager.get_last_collected_date(src) == today_str:
                 recovered_known.append(src)
-        except Exception:
-            continue
+        except Exception as e:
+            # 조용히 넘기면 '차단이 풀렸다'는 전이 자체가 유실된다 — 그 소스는 실패·0건
+            # 목록에도 없어 브리핑이 '전 소스 정상'으로 끝난다(코덱스 지적).
+            pipeline_errors.append(f"{src} 복구 여부 확인 실패")
+            print(f"    [WARN] {src} 복구 판정 조회 실패: {e}", file=sys.stderr)
     recovered_known.sort()
+    # 복구를 알린 소스는 정보 줄을 겹쳐 내보내지 않는다 — 같은 소스에 '해제됐다'와
+    # '감시 중'이 나란히 찍히면 신호가 서로 부딪힌다(간헐적으로 뚫리는 날 발생).
+    known_blocked_notes = [n for n in known_blocked_notes if n["source"] not in set(recovered_known)]
 
     try:
         # 데이터베이스 전체 활성 데이터 조회
@@ -446,6 +488,7 @@ def run_scraping_phase():
             newly_added, modified_count, closed_count, active_postings, weekly_trend,
             failed_sources=display_failed_sources, zero_platforms=display_zero_platforms,
             known_blocked=known_blocked_notes, recovered_known=recovered_known,
+            pipeline_errors=pipeline_errors,
             known_companies=known_companies,
             mass_close_held=getattr(analyzer, "last_mass_close_held", []),
             source_drops=source_drops,

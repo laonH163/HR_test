@@ -159,7 +159,7 @@ class TelegramSender:
             parts.append(", ".join(s.upper() for s in others))
         return " · ".join(parts)
 
-    def build_daily_briefing_message(self, newly_added, modified_count, closed_count, active_postings, weekly_trend=None, failed_sources=None, zero_platforms=None, known_companies=None, mass_close_held=None, source_drops=None, deadline_changes=None, closed_history=None, partial_sources=None, known_blocked=None, recovered_known=None):
+    def build_daily_briefing_message(self, newly_added, modified_count, closed_count, active_postings, weekly_trend=None, failed_sources=None, zero_platforms=None, known_companies=None, mass_close_held=None, source_drops=None, deadline_changes=None, closed_history=None, partial_sources=None, known_blocked=None, recovered_known=None, pipeline_errors=None):
         """당일 수집된 통계 데이터 및 공고 리스트 기반 가독성 높은 텔레그램 카드 메세지 빌딩 (중복 디듀프리케이션 포함)"""
         KST = ZoneInfo("Asia/Seoul")
         run_date_env = os.getenv('RUN_DATE_STR', '')
@@ -389,6 +389,11 @@ class TelegramSender:
             # 활성으로 남으므로(좀비), 반드시 눈에 보여야 한다.
             ps = " · ".join(str(s).upper() for s in sorted(partial_sources))
             health_lines.append(f" • ⏸ 검색 일부 실패로 마감 판정 보류: <b>{ps}</b>")
+        if pipeline_errors:
+            # 수집은 됐는데 저장·마감판정·대시보드가 조용히 실패한 경우. 잡은 성공으로
+            # 끝나 크래시 알림이 안 뜨므로 여기가 유일한 신호다.
+            pe = " · ".join(str(e) for e in pipeline_errors)
+            health_lines.append(f" • ⚠️ 파이프라인 단계 실패: <b>{pe}</b>")
         has_failure_warning = bool(health_lines)  # 여기까지가 '보류로 보호 중'인 상태들
         if recovered_known:
             # 고칠 방법이 없다고 등록해 둔 소스가 다시 수집됐다 = 차단이 풀렸다.

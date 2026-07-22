@@ -104,6 +104,14 @@ class TestBriefingKnownBlockDisplay(unittest.TestCase):
         self.assertIn("남은 활성 공고", text)  # 건수를 모르면 뭉뚱그려 표기
         self.assertIn("수동 확인 필요", text)
 
+    def test_pipeline_errors_surface_as_warning(self):
+        """수집은 됐는데 저장·마감판정이 조용히 실패한 경우가 브리핑에 드러나야 한다"""
+        text = self._build(pipeline_errors=["DB 적재/분류 실패 10건", "마감 판정(Delta) 실패"])
+        self.assertIn("⚠️ 파이프라인 단계 실패", text)
+        self.assertIn("DB 적재/분류 실패 10건", text)
+        self.assertIn("마감 판정(Delta) 실패", text)
+        self.assertNotIn("🩺 수집 상태: 전 소스 정상", text)
+
     def test_no_known_block_keeps_previous_behavior(self):
         text = self._build()
         self.assertIn("🩺 수집 상태: 전 소스 정상", text)

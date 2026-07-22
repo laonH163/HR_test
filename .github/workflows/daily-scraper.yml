@@ -44,7 +44,18 @@ jobs:
     # 신버전이 못 쓰는 불일치가 생겼다(2026-07-02 run48 원티드 3회 전멸의 원인).
     - name: Get installed Playwright version
       id: playwright-version
-      run: echo "version=$(python -c 'import playwright; print(playwright.__version__)')" >> "$GITHUB_OUTPUT"
+      # playwright 최상위 모듈에는 __version__이 없다(실측: AttributeError).
+      # 그런데 echo는 성공해서 스텝이 초록불로 끝나고 캐시 키만 'Linux-playwright-'로
+      # 비어버린다 — 버전이 올라도 키가 안 바뀌는, 바로 이 스텝이 막으려던 상태
+      # (2026-07-02 run48 원티드 3회 전멸의 원인)로 조용히 되돌아가 있었다.
+      # 배포 메타데이터에서 읽고, 빈 값이면 스텝을 실패시켜 무음을 막는다.
+      run: |
+        VER=$(python -c 'from importlib.metadata import version; print(version("playwright"))')
+        if [ -z "$VER" ]; then
+          echo "playwright 버전 확인 실패 — 캐시 키가 무력화되므로 중단한다" >&2
+          exit 1
+        fi
+        echo "version=$VER" >> "$GITHUB_OUTPUT"
 
     - name: Cache Playwright Chromium
       uses: actions/cache@v4
@@ -185,7 +196,18 @@ jobs:
 
     - name: Get installed Playwright version
       id: playwright-version
-      run: echo "version=$(python -c 'import playwright; print(playwright.__version__)')" >> "$GITHUB_OUTPUT"
+      # playwright 최상위 모듈에는 __version__이 없다(실측: AttributeError).
+      # 그런데 echo는 성공해서 스텝이 초록불로 끝나고 캐시 키만 'Linux-playwright-'로
+      # 비어버린다 — 버전이 올라도 키가 안 바뀌는, 바로 이 스텝이 막으려던 상태
+      # (2026-07-02 run48 원티드 3회 전멸의 원인)로 조용히 되돌아가 있었다.
+      # 배포 메타데이터에서 읽고, 빈 값이면 스텝을 실패시켜 무음을 막는다.
+      run: |
+        VER=$(python -c 'from importlib.metadata import version; print(version("playwright"))')
+        if [ -z "$VER" ]; then
+          echo "playwright 버전 확인 실패 — 캐시 키가 무력화되므로 중단한다" >&2
+          exit 1
+        fi
+        echo "version=$VER" >> "$GITHUB_OUTPUT"
 
     - name: Cache Playwright Chromium
       uses: actions/cache@v4
@@ -196,7 +218,14 @@ jobs:
     - name: Install Playwright Chromium
       run: python -m playwright install chromium
 
-    # 회귀 게이트는 생략 — 1차 잡에서 동일 코드로 이미 통과했다.
+    # 회귀 게이트를 여기서도 돌린다. '1차에서 같은 코드로 통과했다'는 전제는 깨질 수 있다 —
+    # 이 잡은 브랜치 최신 tip을 체크아웃하므로, 1차 실행 도중 누가 푸시했거나 1차 push가
+    # 거절돼 새 커밋 위로 rebase되면 여기서 도는 코드는 검증된 적 없는 코드다(코덱스 지적).
+    - name: Run unit tests (regression gate)
+      env:
+        PYTHONPATH: .
+      run: python -m pytest tests/ --ignore=tests/test_wanted_debug.py -q
+
     - name: Run E2E Pipeline (retry — always send final alert)
       env:
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
