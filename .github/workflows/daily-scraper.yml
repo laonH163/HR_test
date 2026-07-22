@@ -107,7 +107,15 @@ jobs:
         Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
         EOF
           )"
-          git push origin HEAD:${{ github.ref_name }}
+          # 푸시 거절 대비 — 실행 도중(수집에 10분 가까이 걸린다) 누군가 같은 브랜치에
+          # 푸시하면 'fetch first'로 거절된다(2026-07-22 실측: 문서 커밋 한 번에 잡 전체 실패).
+          # 원격을 받아 rebase 후 한 번 더 시도한다. 그래도 실패하면(같은 파일 충돌)
+          # 조용히 넘기지 않고 잡을 실패시켜 크래시 알림이 울리게 둔다.
+          git push origin HEAD:${{ github.ref_name }} || {
+            echo "[WARN] 푸시 거절 — 원격이 앞서 있음. rebase 후 재시도"
+            git pull --rebase origin ${{ github.ref_name }}
+            git push origin HEAD:${{ github.ref_name }}
+          }
         else
           echo "No database or index.html updates found today."
         fi
@@ -120,8 +128,14 @@ jobs:
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       run: |
-        curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-          --data-urlencode chat_id="${TELEGRAM_CHAT_ID}" \
+        # 시크릿 값에 줄바꿈·따옴표가 섞여 있으면 URL이 깨져 curl이 exit 3으로 죽는다.
+        # (2026-07-22 실측: 이 안전망이 정작 필요한 순간에 URL malformed로 실패했다.
+        #  src/reporter/telegram_sender.py도 같은 이유로 strip을 하고 있었는데
+        #  여기만 원본을 그대로 URL에 끼워 넣고 있었다.)
+        TOKEN=$(printf '%s' "${TELEGRAM_BOT_TOKEN}" | tr -d "\r\n\"'")
+        CHAT=$(printf '%s' "${TELEGRAM_CHAT_ID}" | tr -d "\r\n\"'")
+        curl -sS -X POST "https://api.telegram.org/bot${TOKEN}/sendMessage" \
+          --data-urlencode chat_id="${CHAT}" \
           --data-urlencode text="🚨 수집 파이프라인 1차 실행이 도중에 실패했습니다. 로그 확인: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" > /dev/null
 
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -131,7 +145,13 @@ jobs:
   # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   retry-on-fresh-runner:
     needs: run-daily-scraping
-    if: needs.run-daily-scraping.outputs.retry_needed == 'true'
+    # always()가 필요하다. 1차 잡이 실패로 끝나면 기본 규칙상 이 잡이 건너뛰어지는데,
+    # 1차는 '실패 소스가 있으니 최종 브리핑은 2차가 보낸다'며 발송을 보류한 상태다.
+    # 즉 2차가 안 돌면 브리핑이 통째로 사라진다 — 정확히 이 시스템이 막으려는 무음 실패다
+    # (2026-07-22 실측: 푸시 거절로 1차가 죽자 2차 skipped → 그날 브리핑 실종).
+    # retry_needed는 detect-failed 스텝이 설정하므로, 그 앞에서 죽으면(테스트 게이트 실패 등)
+    # 값이 비어 이 조건이 false가 되고 재시도도 하지 않는다 — 코드가 깨진 날의 올바른 동작.
+    if: always() && needs.run-daily-scraping.outputs.retry_needed == 'true'
     runs-on: ubuntu-latest
     steps:
     # 기본값(github.sha)은 1차 잡이 방금 push한 데이터 커밋을 못 보므로 브랜치 최신 tip을 명시
@@ -195,7 +215,12 @@ jobs:
         Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
         EOF
           )"
-          git push origin HEAD:${{ github.ref_name }}
+          # 1차 잡과 같은 이유로 거절 대비 rebase 재시도 (실행 중 동시 푸시)
+          git push origin HEAD:${{ github.ref_name }} || {
+            echo "[WARN] 푸시 거절 — 원격이 앞서 있음. rebase 후 재시도"
+            git pull --rebase origin ${{ github.ref_name }}
+            git push origin HEAD:${{ github.ref_name }}
+          }
         else
           echo "No database or index.html updates found on retry."
         fi
@@ -206,6 +231,10 @@ jobs:
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       run: |
-        curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-          --data-urlencode chat_id="${TELEGRAM_CHAT_ID}" \
+        # 시크릿의 줄바꿈·따옴표를 제거하지 않으면 URL이 깨져 curl이 exit 3으로 죽는다
+        # (2026-07-22 실측 — 1차 잡의 같은 스텝 주석 참조)
+        TOKEN=$(printf '%s' "${TELEGRAM_BOT_TOKEN}" | tr -d "\r\n\"'")
+        CHAT=$(printf '%s' "${TELEGRAM_CHAT_ID}" | tr -d "\r\n\"'")
+        curl -sS -X POST "https://api.telegram.org/bot${TOKEN}/sendMessage" \
+          --data-urlencode chat_id="${CHAT}" \
           --data-urlencode text="🚨 수집 파이프라인 재시도 실행마저 도중에 실패했습니다. 로그 확인: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" > /dev/null
