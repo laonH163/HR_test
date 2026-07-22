@@ -277,40 +277,55 @@ class DBManager:
         conn.close()
         return succeeded
 
-    def get_last_success_date(self, source):
-        """해당 소스가 마지막으로 수집에 성공한 날짜(YYYY-MM-DD). 이력이 없으면 None.
+    def get_last_collected_date(self, source):
+        """해당 소스에서 **공고를 실제로 한 건이라도 가져온** 마지막 날짜. 없으면 None.
 
-        '알려진 차단'이 며칠째 이어지는지 세는 데 쓴다. 차단이 길어지면 그 소스의 기존
-        활성 공고가 마감 보류로 계속 보호되어 좀비가 되므로 사람이 확인해야 한다.
-        successful_sources가 없는 과거 행은 source_counts의 수집 건수>0으로 폴백한다
-        (get_sources_succeeded_today와 같은 판정 기준)."""
+        판정 기준이 successful_sources(=접속 성공)가 아니라 source_counts>0(=수집 성과)인
+        것이 핵심이다. '접속은 됐는데 결과 0건'은 검색 열화의 전형적 신호이지 복구가
+        아니다 — 실측으로 과거 11회 있었고(run 49~55의 원티드·게임잡), 이걸 성공으로
+        세면 '알려진 차단'의 경과일 시계가 매일 0으로 리셋돼 좀비 경고가 영원히 안 뜬다
+        (2026-07-22 코덱스 교차검토 지적, 이력 대조로 실증).
+
+        경고 표시 보정용인 get_sources_succeeded_today와는 목적이 달라 기준도 다르다.
+        그쪽은 '오늘 자료를 확보했나'(접속 성공 포함)를 묻고, 이쪽은 '언제 마지막으로
+        실제 수확이 있었나'를 묻는다."""
         conn = self.get_connection()
         cursor = conn.cursor()
         cursor.execute(
             """
-            SELECT run_date, source_counts, successful_sources FROM scrape_logs
+            SELECT run_date, source_counts FROM scrape_logs
+            WHERE source_counts IS NOT NULL AND source_counts != '{}'
             ORDER BY run_date DESC, run_id DESC
             """
         )
         target = str(source).lower()
         found = None
         for row in cursor.fetchall():
-            ok = False
             try:
-                ok = target in {str(s).lower() for s in json.loads(row["successful_sources"] or "[]")}
+                counts = {str(k).lower(): v for k, v in json.loads(row["source_counts"]).items()}
             except Exception:
-                pass
-            if not ok:
-                try:
-                    counts = {str(k).lower(): v for k, v in json.loads(row["source_counts"] or "{}").items()}
-                    ok = bool(counts.get(target))
-                except Exception:
-                    pass
-            if ok:
+                continue
+            if counts.get(target):
                 found = row["run_date"]
                 break
         conn.close()
         return found
+
+    def get_active_count_by_source(self, source):
+        """해당 소스의 현재 활성(ACTIVE) 공고 수.
+
+        '알려진 차단이 오래됐다'는 경고는 지킬 공고가 남아 있을 때만 의미가 있다.
+        활성 0건인데 매일 '마감됐는지 확인하라'고 띄우면 그 경고 자체가 다시 소음이
+        된다(2026-07-22 코덱스 교차검토 지적)."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT COUNT(*) AS n FROM job_postings WHERE source = ? AND status = 'ACTIVE'",
+            (str(source).lower(),),
+        )
+        n = cursor.fetchone()["n"]
+        conn.close()
+        return n
 
     def get_recent_source_counts(self, runs=7):
         """최근 성공 실행들의 소스별 수집 건수 이력 — {source: [건수, ...]} (최신순).

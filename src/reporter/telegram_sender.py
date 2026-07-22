@@ -368,6 +368,9 @@ class TelegramSender:
         # 최하단에 컴팩트하게 모은다. 무음 실패 방지가 목적이므로 정상인 날도 한 줄로 확인시켜 준다.
         # (실측: 원티드가 한 달간 0건이었는데 error_log에만 남아 아무도 몰랐던 사고의 재발 방지)
         health_lines = []
+        # '마감 보류로 보호 중' 안내문은 실패성 경고에만 해당한다. ✅ 복구 알림만 있는 날에
+        # 붙으면 사실과 어긋나고, 복구를 '같은 경고'라고 부르는 꼴이 된다(코덱스 지적).
+        has_failure_warning = False
         if failed_sources:
             # CI에서는 새 러너(새 IP) 재시도까지 거친 뒤의 최종 실패만 여기 도달한다.
             health_lines.append(f" • ⚠️ 접속 실패: <b>{self._summarize_failed_sources(failed_sources)}</b>")
@@ -386,6 +389,7 @@ class TelegramSender:
             # 활성으로 남으므로(좀비), 반드시 눈에 보여야 한다.
             ps = " · ".join(str(s).upper() for s in sorted(partial_sources))
             health_lines.append(f" • ⏸ 검색 일부 실패로 마감 판정 보류: <b>{ps}</b>")
+        has_failure_warning = bool(health_lines)  # 여기까지가 '보류로 보호 중'인 상태들
         if recovered_known:
             # 고칠 방법이 없다고 등록해 둔 소스가 다시 수집됐다 = 차단이 풀렸다.
             # 등록 표(src/utils/known_blocks.py)에서 지워야 하므로 조치가 필요한 알림이다.
@@ -395,14 +399,18 @@ class TelegramSender:
         # 알려진 차단이 오래 이어지면 정보가 아니라 경고다(활성 공고가 좀비일 수 있음)
         for note in (known_blocked or []):
             if note.get("stale"):
+                n_active = note.get("active_count")
+                target = f"활성 {n_active}건" if n_active else "남은 활성 공고"
                 health_lines.append(
                     f" • ⚠️ <b>{str(note['source']).upper()}</b> 차단 {note['days']}일째 "
-                    f"— 남은 활성 공고가 실제로 마감됐는지 수동 확인 필요")
+                    f"— {target}이 실제로 마감됐는지 수동 확인 필요")
+                has_failure_warning = True  # 마감 보류로 보호 중인 상태가 맞다
 
         if health_lines:
             msg_lines.append("🩺 <b>수집 상태 점검:</b>")
             msg_lines.extend(health_lines)
-            msg_lines.append("<i>※ 해당 소스는 마감 보류로 보호 중이라 데이터는 안전합니다. 같은 경고가 이틀 이상 반복되면 점검이 필요합니다.</i>")
+            if has_failure_warning:
+                msg_lines.append("<i>※ 해당 소스는 마감 보류로 보호 중이라 데이터는 안전합니다. 같은 경고가 이틀 이상 반복되면 점검이 필요합니다.</i>")
         else:
             msg_lines.append("🩺 수집 상태: 전 소스 정상")
 

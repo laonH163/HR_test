@@ -59,3 +59,12 @@ def describe(source):
     """텔레그램 한 줄 표시용 요약 문구 (등록되지 않은 소스면 None)"""
     info = KNOWN_BLOCKED_SOURCES.get(str(source).lower())
     return info.get("summary") if info else None
+
+
+def blocked_since(source):
+    """등록된 차단 시작일(YYYY-MM-DD). 등록되지 않았으면 None.
+
+    수집 이력이 없을 때(DB 교체·로그 정리 등) 경과일을 셀 기준이 사라져 좀비 경고가
+    영원히 안 뜨는 구멍을 막는 폴백이다(2026-07-22 코덱스 교차검토 지적)."""
+    info = KNOWN_BLOCKED_SOURCES.get(str(source).lower())
+    return info.get("since") if info else None

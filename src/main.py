@@ -19,7 +19,8 @@ from src.classifier.hybrid_engine import HybridClassificationEngine
 from src.analyzer.delta_analyzer import DeltaAnalyzer
 from src.reporter.html_generator import HTMLGenerator
 from src.reporter.telegram_sender import TelegramSender
-from src.utils.known_blocks import ZOMBIE_ALERT_DAYS, describe, split_known_blocked
+from src.utils.known_blocks import (KNOWN_BLOCKED_SOURCES, ZOMBIE_ALERT_DAYS,
+                                    blocked_since, describe, split_known_blocked)
 
 # 잡코리아 공고 상세 URL에서 GI번호(공고 고유번호) 추출용 — 정의는 jobkorea_detail이 원본
 from src.scraper.jobkorea_detail import GI_READ_RE as JOBKOREA_GI_RE
@@ -356,32 +357,53 @@ def run_scraping_phase():
     #       공고가 실제로는 마감된 좀비일 수 있어 사람 확인이 필요해지는 시점).
     known_blocked_display, display_failed_sources = split_known_blocked(display_failed_sources)
     known_blocked_zero, display_zero_platforms = split_known_blocked(display_zero_platforms)
+    today_str = datetime.now(KST).strftime("%Y-%m-%d")
     known_blocked_notes = []
     for src in sorted(set(known_blocked_display) | set(known_blocked_zero)):
         try:
-            last_ok = db_manager.get_last_success_date(src)
+            last_ok = db_manager.get_last_collected_date(src)
         except Exception:
             last_ok = None
+        # 수집 이력이 아예 없으면(DB 교체·로그 정리) 등록된 차단 시작일을 기준으로 센다.
+        # 이 폴백이 없으면 days=None → stale=False로 굳어 좀비 경고가 영원히 안 뜬다.
+        basis = last_ok or blocked_since(src)
         days = None
-        if last_ok:
+        if basis:
             try:
-                days = (datetime.now(KST).date() - datetime.strptime(last_ok, "%Y-%m-%d").date()).days
+                days = (datetime.now(KST).date() - datetime.strptime(basis, "%Y-%m-%d").date()).days
             except Exception:
                 days = None
+        # 지킬 공고가 남아 있을 때만 경고로 승격한다. 활성 0건이면 '마감됐는지 확인하라'는
+        # 말 자체가 성립하지 않고, 매일 반복되면 그 경고가 다시 소음이 된다.
+        try:
+            active_n = db_manager.get_active_count_by_source(src)
+        except Exception:
+            active_n = 0
         known_blocked_notes.append({
             "source": src,
             "summary": describe(src) or "알려진 차단",
             "last_success": last_ok,
             "days": days,
-            "stale": days is not None and days >= ZOMBIE_ALERT_DAYS,
+            "active_count": active_n,
+            "stale": days is not None and days >= ZOMBIE_ALERT_DAYS and active_n > 0,
         })
     if known_blocked_notes:
         # ※ f-string 안에 같은 따옴표를 중첩하면 Python 3.11에서 SyntaxError다(CI가 3.11)
-        summary = ", ".join("{}({}일째)".format(n["source"], n["days"]) for n in known_blocked_notes)
+        summary = ", ".join("{}({}일째, 활성 {}건)".format(n["source"], n["days"], n["active_count"])
+                            for n in known_blocked_notes)
         print(f"    [INFO] 알려진 차단(경고 아님): {summary}")
 
     # 알려진 차단 소스가 다시 수집되면 표에서 지워야 하므로 눈에 띄게 알린다(자동 복구 감지).
-    recovered_known = sorted(s for s in sources_ok_today if describe(s))
+    # 판정 기준은 '오늘 실제로 공고를 가져왔는가'다 — 접속 성공만으로 복구라고 하면
+    # '접속은 되는데 0건'(검색 열화)을 복구로 오인해 정반대 신호를 보낸다.
+    recovered_known = []
+    for src in KNOWN_BLOCKED_SOURCES:
+        try:
+            if db_manager.get_last_collected_date(src) == today_str:
+                recovered_known.append(src)
+        except Exception:
+            continue
+    recovered_known.sort()
 
     try:
         # 데이터베이스 전체 활성 데이터 조회

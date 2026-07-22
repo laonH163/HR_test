@@ -324,6 +324,17 @@ footer code{font-family:var(--mono)}
     "그냥 다 똑같이 긁으면 되는 거 아닌가"가 가장 흔한 오해다. 실제로는 사이트가 정보를 내주는 방식이 제각각이라,
     수집 방법도 따라서 달라진다. 무거운 방법일수록 느리고 잘 막히므로, <b>가능하면 가벼운 방법을 쓴다.</b>
   </p>
+  <div class="card" style="margin-bottom:16px">
+    <span class="kicker">먼저 짚고 갈 것</span>
+    <h4>세 방식 모두 "화면을 사진으로 찍어 읽는" 게 아니다</h4>
+    <p>
+      웹페이지의 HTML은 <b>글자로 된 설계도</b>다. 브라우저가 그 설계도를 읽어서 우리 눈에 보이는 화면을 그린다.
+      우리는 <b>그려지기 전의 글자 뭉치를 그대로 받아온다.</b> 거기엔 정보마다 이름표가 붙어 있어
+      ("여기부터 여기까지가 공고 제목") 원하는 부분만 정확히 꺼낼 수 있다 — 이것이 <b>파싱</b>이다.
+      화면을 이미지로 찍어 글자를 알아내는 방식(OCR)은 느리고 틀리기 쉬워 <b>쓰지 않는다.</b>
+      잡코리아 상세 내용도 처음엔 OCR이 필요해 보였지만, 숨은 프레임 안에 글자로 존재하는 것을 찾아내 해결했다.
+    </p>
+  </div>
   <div class="tablewrap">
     <table>
       <thead>
@@ -337,10 +348,10 @@ footer code{font-family:var(--mono)}
           <td>API가 공개된 곳에만 가능</td>
         </tr>
         <tr>
-          <td><b>HTML 내려받아 파싱</b><br><span style="color:var(--ink-3);font-size:12.5px">화면 코드에서 골라냄</span></td>
+          <td><b>HTML 내려받아 파싱</b><br><span style="color:var(--ink-3);font-size:12.5px">글자로 된 화면 설계도에서 골라냄</span></td>
           <td>사람인 · 잡코리아 · 게임잡</td>
           <td>가볍고 빠름. 대부분 이 방식으로 해결</td>
-          <td>사이트 개편되면 그대로 깨짐</td>
+          <td>사이트 개편되면 이름표 위치가 바뀌어 깨짐</td>
         </tr>
         <tr>
           <td><b>진짜 브라우저 구동</b><br><span style="color:var(--ink-3);font-size:12.5px">사람처럼 열어서 봄</span></td>

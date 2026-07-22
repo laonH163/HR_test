@@ -59,11 +59,11 @@ class TestBriefingKnownBlockDisplay(unittest.TestCase):
         """차단이 오래되면 경고로 승격 — 남은 활성 공고가 좀비일 수 있어 사람 확인 필요"""
         text = self._build(known_blocked=[{
             "source": "wanted", "summary": "러너 IP 차단(원티드 WAF)",
-            "last_success": "2026-07-01", "days": 21, "stale": True,
+            "last_success": "2026-07-01", "days": 21, "active_count": 1, "stale": True,
         }])
         self.assertIn("🩺 <b>수집 상태 점검:</b>", text)
         self.assertIn("차단 21일째", text)
-        self.assertIn("수동 확인 필요", text)
+        self.assertIn("활성 1건이 실제로 마감됐는지 수동 확인 필요", text)
         self.assertNotIn("조치 불요", text)  # 정보 줄과 중복 표시되지 않아야 함
 
     def test_recovery_is_announced(self):
@@ -72,6 +72,16 @@ class TestBriefingKnownBlockDisplay(unittest.TestCase):
         self.assertIn("✅ 차단 해제 확인", text)
         self.assertIn("WANTED", text)
         self.assertIn("known_blocks 등록 해제 필요", text)
+
+    def test_recovery_only_omits_hold_notice(self):
+        """복구 알림만 있는 날에 '마감 보류로 보호 중' 안내문이 붙으면 사실과 어긋난다"""
+        text = self._build(recovered_known=["wanted"])
+        self.assertNotIn("마감 보류로 보호 중", text)
+
+    def test_failure_warning_keeps_hold_notice(self):
+        """실패성 경고가 있을 때는 기존 안내문이 그대로 유지돼야 한다(회귀 방지)"""
+        text = self._build(failed_sources=["jobkorea"], recovered_known=["wanted"])
+        self.assertIn("마감 보류로 보호 중", text)
 
     def test_normal_failures_still_warn(self):
         """알려진 차단 처리가 일반 실패 경고를 삼키면 안 된다(무음 실패 방지)"""
@@ -90,8 +100,12 @@ class TestBriefingKnownBlockDisplay(unittest.TestCase):
         self.assertNotIn("ℹ️", text)
 
 
-class TestLastSuccessDate(unittest.TestCase):
-    """차단 경과일 계산의 근거가 되는 '마지막 성공일' 조회 검증"""
+class TestLastCollectedDate(unittest.TestCase):
+    """차단 경과일 계산의 근거가 되는 '마지막 수확일' 조회 검증.
+
+    판정 기준이 '접속 성공'이 아니라 '실제 수집 건수>0'이어야 한다 — 접속만 되고 0건인
+    상태를 성공으로 세면 경과일이 매일 리셋돼 좀비 경고가 영원히 안 뜬다.
+    """
 
     def setUp(self):
         fd, self.db_path = tempfile.mkstemp(suffix=".db")
@@ -103,6 +117,12 @@ class TestLastSuccessDate(unittest.TestCase):
                 run_date TEXT, newly_added INTEGER, modified_count INTEGER,
                 closed_count INTEGER, is_success INTEGER, error_log TEXT,
                 source_counts TEXT, successful_sources TEXT
+            )""")
+        conn.execute("""
+            CREATE TABLE job_postings (
+                id TEXT PRIMARY KEY, source TEXT, company_name TEXT, title TEXT,
+                origin_url TEXT, location TEXT, posted_at TEXT, status TEXT,
+                raw_html TEXT, first_seen_at TEXT, last_updated_at TEXT, deadline TEXT
             )""")
         rows = [
             # (run_date, source_counts, successful_sources)
@@ -126,15 +146,31 @@ class TestLastSuccessDate(unittest.TestCase):
         except OSError:
             pass
 
-    def test_returns_latest_success_date(self):
-        self.assertEqual(self.db.get_last_success_date("wanted"), "2026-07-16")
-        self.assertEqual(self.db.get_last_success_date("saramin"), "2026-07-22")
+    def test_returns_latest_collected_date(self):
+        self.assertEqual(self.db.get_last_collected_date("wanted"), "2026-07-16")
+        self.assertEqual(self.db.get_last_collected_date("saramin"), "2026-07-22")
 
-    def test_returns_none_when_never_succeeded(self):
-        self.assertIsNone(self.db.get_last_success_date("gamejob"))
+    def test_returns_none_when_never_collected(self):
+        self.assertIsNone(self.db.get_last_collected_date("gamejob"))
 
-    def test_falls_back_to_source_counts(self):
-        """successful_sources 컬럼이 없던 과거 행도 수집 건수>0이면 성공으로 본다"""
+    def test_connected_but_zero_result_is_not_success(self):
+        """접속 성공 목록에 있어도 수집 0건이면 '마지막 수확일'이 아니다.
+
+        실측 근거: run 49~55에서 원티드·게임잡이 '접속 성공 + 0건'으로 11회 기록됐고,
+        그때가 바로 검색이 열화된 시점이었다(복구가 아니었다)."""
+        conn = sqlite3.connect(self.db_path)
+        conn.execute(
+            "INSERT INTO scrape_logs (run_date, newly_added, modified_count, closed_count,"
+            " is_success, error_log, source_counts, successful_sources)"
+            " VALUES ('2026-07-23', 0, 0, 0, 1, '0건 플랫폼(점검 필요): wanted',"
+            " '{\"wanted\": 0, \"saramin\": 11}', '[\"wanted\", \"saramin\"]')")
+        conn.commit()
+        conn.close()
+        # 접속은 성공했지만 0건 → 마지막 수확일은 여전히 7/16이어야 한다
+        self.assertEqual(self.db.get_last_collected_date("wanted"), "2026-07-16")
+
+    def test_legacy_row_without_successful_sources_counts(self):
+        """successful_sources 컬럼이 없던 과거 행도 수집 건수>0이면 수확으로 인정한다"""
         conn = sqlite3.connect(self.db_path)
         conn.execute(
             "INSERT INTO scrape_logs (run_date, newly_added, modified_count, closed_count,"
@@ -142,7 +178,32 @@ class TestLastSuccessDate(unittest.TestCase):
             " VALUES ('2026-07-20', 0, 0, 0, 1, NULL, '{\"gamejob\": 16}', NULL)")
         conn.commit()
         conn.close()
-        self.assertEqual(self.db.get_last_success_date("gamejob"), "2026-07-20")
+        self.assertEqual(self.db.get_last_collected_date("gamejob"), "2026-07-20")
+
+    def test_active_count_by_source(self):
+        conn = sqlite3.connect(self.db_path)
+        for jid, src, status in [("wanted_1", "wanted", "ACTIVE"),
+                                 ("wanted_2", "wanted", "CLOSED"),
+                                 ("saramin_1", "saramin", "ACTIVE")]:
+            conn.execute(
+                "INSERT INTO job_postings (id, source, company_name, title, origin_url,"
+                " location, posted_at, status, raw_html, first_seen_at, last_updated_at, deadline)"
+                " VALUES (?, ?, '회사', '재무 담당자', 'https://example.com', '서울',"
+                " '2026-07-16', ?, '', '2026-07-16', '2026-07-16', NULL)", (jid, src, status))
+        conn.commit()
+        conn.close()
+        self.assertEqual(self.db.get_active_count_by_source("wanted"), 1)
+        self.assertEqual(self.db.get_active_count_by_source("saramin"), 1)
+        self.assertEqual(self.db.get_active_count_by_source("gamejob"), 0)
+
+
+class TestBlockedSinceFallback(unittest.TestCase):
+    """수집 이력이 아예 없을 때 경과일을 셀 기준(등록된 차단 시작일) 검증"""
+
+    def test_since_is_available_for_registered_source(self):
+        from src.utils.known_blocks import blocked_since
+        self.assertEqual(blocked_since("wanted"), "2026-07-16")
+        self.assertIsNone(blocked_since("saramin"))
 
 
 if __name__ == "__main__":
