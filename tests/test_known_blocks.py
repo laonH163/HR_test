@@ -94,6 +94,16 @@ class TestBriefingKnownBlockDisplay(unittest.TestCase):
         self.assertIn("JOBKOREA", text)
         self.assertIn("ℹ️ WANTED", text)
 
+    def test_unknown_active_count_still_escalates(self):
+        """활성 수 조회가 실패해 모르는 상태면 보수적으로 경고를 유지해야 한다"""
+        text = self._build(known_blocked=[{
+            "source": "wanted", "summary": "러너 IP 차단", "last_success": "2026-07-01",
+            "days": 21, "active_count": None, "stale": True,
+        }])
+        self.assertIn("차단 21일째", text)
+        self.assertIn("남은 활성 공고", text)  # 건수를 모르면 뭉뚱그려 표기
+        self.assertIn("수동 확인 필요", text)
+
     def test_no_known_block_keeps_previous_behavior(self):
         text = self._build()
         self.assertIn("🩺 수집 상태: 전 소스 정상", text)
@@ -179,6 +189,25 @@ class TestLastCollectedDate(unittest.TestCase):
         conn.commit()
         conn.close()
         self.assertEqual(self.db.get_last_collected_date("gamejob"), "2026-07-20")
+
+    def test_sources_collected_today_excludes_zero_result(self):
+        """'접속 성공 + 0건'은 오늘 수확한 소스가 아니다.
+
+        이 구분이 무너지면 0건 소스가 제 손으로 자기 경고를 지워 '전 소스 정상'이
+        찍힌다(2026-07-22 코덱스 교차검토 지적, 과거 11회 실재)."""
+        conn = sqlite3.connect(self.db_path)
+        conn.execute(
+            "INSERT INTO scrape_logs (run_date, newly_added, modified_count, closed_count,"
+            " is_success, error_log, source_counts, successful_sources)"
+            " VALUES ('2026-07-23', 0, 0, 0, 1, NULL,"
+            " '{\"wanted\": 0, \"saramin\": 11}', '[\"wanted\", \"saramin\"]')")
+        conn.commit()
+        conn.close()
+        collected = self.db.get_sources_collected_today("2026-07-23")
+        self.assertIn("saramin", collected)
+        self.assertNotIn("wanted", collected)  # 접속은 성공했지만 수확 0건
+        # 대조: 기존 '접속 성공' 기준에는 원티드가 들어간다(경고 보정 목적이 다름)
+        self.assertIn("wanted", self.db.get_sources_succeeded_today("2026-07-23"))
 
     def test_active_count_by_source(self):
         conn = sqlite3.connect(self.db_path)

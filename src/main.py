@@ -178,6 +178,11 @@ def run_scraping_phase():
     # [실패 마커 기록] — CI가 새 러너(새 IP)로 2차 시도할지 판단하는 게이트 파일.
     # IP 차단은 러너 단위로 걸려 같은 프로세스 안의 재시도로는 복구되지 않는다(2026-07-02 run48 실측).
     failed_marker = os.path.join("data", "last_failed_sources.txt")
+    # 마커 기록이 실패하면 2차 실행이 예약되지 않는다. 그런데 아래 발송 보류는
+    # '2차가 최종 브리핑을 보낸다'는 전제 위에 서 있어, 마커가 없으면 보류만 하고
+    # 아무도 안 보내는 완전 무음이 된다(2026-07-22 코덱스 교차검토 지적).
+    # → 기록 실패 시 보류 전제를 포기하고 이번 실행이 직접 발송하도록 표시한다.
+    retry_marker_ok = True
     try:
         if retry_targets:
             with open(failed_marker, "w", encoding="utf-8") as f:
@@ -185,7 +190,9 @@ def run_scraping_phase():
         elif os.path.exists(failed_marker):
             os.remove(failed_marker)
     except Exception as e:
-        print(f"    [WARN] 실패 마커 기록 실패: {e}", file=sys.stderr)
+        retry_marker_ok = False
+        print(f"    [WARN] 실패 마커 기록 실패 — 2차 실행 예약 불가로 보고 이번 실행이 "
+              f"직접 브리핑을 발송한다: {e}", file=sys.stderr)
 
     # 8-2c. [잡코리아 GI 중복 병합] — 검색·기업페이지 이중 수집분을 DB 적재 전에 정리
     all_postings = dedupe_jobkorea_gi(all_postings)
@@ -327,7 +334,7 @@ def run_scraping_phase():
     #     ※ 판정 기준은 failed_sources가 아니라 retry_targets다. 알려진 차단 소스는 재시도
     #       마커에 안 들어가 2차 실행이 애초에 예약되지 않으므로, 그걸로 보류했다가는
     #       발송할 실행이 아무도 없어 브리핑이 통째로 사라진다.
-    if retry_targets and os.getenv("SUPPRESS_ALERT_ON_SOURCE_FAILURE") == "1":
+    if retry_targets and retry_marker_ok and os.getenv("SUPPRESS_ALERT_ON_SOURCE_FAILURE") == "1":
         print("\n[-] 실패 소스 감지 → 텔레그램 발송 보류 (새 러너 재시도 실행이 최종 발송)")
         print("\n==================================================")
         print(f"[1차 시도 종료] 신규 추가: {newly_added}건 | 변동 수정: {modified_count}건 | 마감 완료: {closed_count}건 | 실패 소스: {len(retry_targets)}곳")
@@ -341,13 +348,23 @@ def run_scraping_phase():
     #       (2026-07-16 실측: 1차가 잡코리아 전부 정상 수집했는데 재시도 러너만 IP 차단
     #        → '24곳 접속 실패' 오경보 발송. 경고의 의미는 '오늘 자료 미확보'여야 한다.)
     #       ※ 데이터 보호 가드(마감 보류 등)는 시도별 보수 판정 그대로 — 표시만 보정.
+    today_str = datetime.now(KST).strftime("%Y-%m-%d")
     try:
-        sources_ok_today = db_manager.get_sources_succeeded_today(datetime.now(KST).strftime("%Y-%m-%d"))
+        sources_ok_today = db_manager.get_sources_succeeded_today(today_str)
     except Exception:
         sources_ok_today = set()
+    # '검색 0건' 경고의 보정 기준은 접속 성공이 아니라 **실제 수집**이어야 한다.
+    # 접속 성공을 기준으로 삼으면 '접속은 되는데 0건'인 소스가 제 손으로 자기 경고를
+    # 지워 '전 소스 정상'이 찍힌다 — 과거 11회 실재한 상태이고(run 49~55의 원티드·게임잡),
+    # 그게 바로 검색이 죽어가던 시점이었다(2026-07-22 코덱스 교차검토 지적).
+    try:
+        sources_collected_today = db_manager.get_sources_collected_today(today_str)
+    except Exception:
+        sources_collected_today = set()
     display_failed_sources = sorted(set(failed_sources) - sources_ok_today)
-    display_zero_platforms = [s for s in zero_platforms if s not in sources_ok_today]
-    recovered = (set(failed_sources) | set(zero_platforms)) & sources_ok_today
+    display_zero_platforms = [s for s in zero_platforms if s not in sources_collected_today]
+    recovered = ((set(failed_sources) & sources_ok_today)
+                 | (set(zero_platforms) & sources_collected_today))
     if recovered:
         print(f"    [INFO] 오늘 타 시도에서 이미 확보된 소스는 경고 제외: {', '.join(sorted(recovered))}")
 
@@ -357,7 +374,6 @@ def run_scraping_phase():
     #       공고가 실제로는 마감된 좀비일 수 있어 사람 확인이 필요해지는 시점).
     known_blocked_display, display_failed_sources = split_known_blocked(display_failed_sources)
     known_blocked_zero, display_zero_platforms = split_known_blocked(display_zero_platforms)
-    today_str = datetime.now(KST).strftime("%Y-%m-%d")
     known_blocked_notes = []
     for src in sorted(set(known_blocked_display) | set(known_blocked_zero)):
         try:
@@ -375,22 +391,25 @@ def run_scraping_phase():
                 days = None
         # 지킬 공고가 남아 있을 때만 경고로 승격한다. 활성 0건이면 '마감됐는지 확인하라'는
         # 말 자체가 성립하지 않고, 매일 반복되면 그 경고가 다시 소음이 된다.
+        # 조회가 실패했을 때 0으로 단정하면 '지킬 게 없다'며 경고를 지워버린다.
+        # 모르는 상태는 보수적으로 '있을 수 있다'로 다룬다(코덱스 지적).
         try:
             active_n = db_manager.get_active_count_by_source(src)
         except Exception:
-            active_n = 0
+            active_n = None
         known_blocked_notes.append({
             "source": src,
             "summary": describe(src) or "알려진 차단",
             "last_success": last_ok,
             "days": days,
             "active_count": active_n,
-            "stale": days is not None and days >= ZOMBIE_ALERT_DAYS and active_n > 0,
+            "stale": days is not None and days >= ZOMBIE_ALERT_DAYS and active_n != 0,
         })
     if known_blocked_notes:
         # ※ f-string 안에 같은 따옴표를 중첩하면 Python 3.11에서 SyntaxError다(CI가 3.11)
-        summary = ", ".join("{}({}일째, 활성 {}건)".format(n["source"], n["days"], n["active_count"])
-                            for n in known_blocked_notes)
+        summary = ", ".join("{}({}일째, 활성 {}건)".format(
+            n["source"], n["days"], "?" if n["active_count"] is None else n["active_count"])
+            for n in known_blocked_notes)
         print(f"    [INFO] 알려진 차단(경고 아님): {summary}")
 
     # 알려진 차단 소스가 다시 수집되면 표에서 지워야 하므로 눈에 띄게 알린다(자동 복구 감지).

@@ -9,6 +9,14 @@ on:
 permissions:
   contents: write # 갱신된 DB 및 index.html 커밋 권한 보장
 
+# 같은 브랜치에서 두 실행이 겹치지 않게 직렬화한다. 겹치면 ① 같은 기준 DB에서 각자
+# 수집해 나중 실행의 결과가 바이너리 충돌로 버려지고 ② 텔레그램이 두 통 갈 수 있다
+# (2026-07-22 코덱스 교차검토 지적). 진행 중인 실행을 죽이면 그날 수집이 통째로
+# 날아가므로 cancel-in-progress는 false — 뒤 실행이 기다린다.
+concurrency:
+  group: daily-scraper-${{ github.ref_name }}
+  cancel-in-progress: false
+
 jobs:
   run-daily-scraping:
     runs-on: ubuntu-latest
@@ -134,7 +142,9 @@ jobs:
         #  여기만 원본을 그대로 URL에 끼워 넣고 있었다.)
         TOKEN=$(printf '%s' "${TELEGRAM_BOT_TOKEN}" | tr -d "\r\n\"'")
         CHAT=$(printf '%s' "${TELEGRAM_CHAT_ID}" | tr -d "\r\n\"'")
-        curl -sS -X POST "https://api.telegram.org/bot${TOKEN}/sendMessage" \
+        # --fail-with-body가 없으면 curl은 HTTP 400/401/429/500도 '성공'으로 끝낸다.
+        # 토큰 오류·봇 추방·API 장애로 알림이 안 갔는데 스텝은 초록불인 무음이 된다(코덱스 지적).
+        curl -sS --fail-with-body --max-time 20 -X POST "https://api.telegram.org/bot${TOKEN}/sendMessage" \
           --data-urlencode chat_id="${CHAT}" \
           --data-urlencode text="🚨 수집 파이프라인 1차 실행이 도중에 실패했습니다. 로그 확인: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" > /dev/null
 
@@ -151,7 +161,8 @@ jobs:
     # (2026-07-22 실측: 푸시 거절로 1차가 죽자 2차 skipped → 그날 브리핑 실종).
     # retry_needed는 detect-failed 스텝이 설정하므로, 그 앞에서 죽으면(테스트 게이트 실패 등)
     # 값이 비어 이 조건이 false가 되고 재시도도 하지 않는다 — 코드가 깨진 날의 올바른 동작.
-    if: always() && needs.run-daily-scraping.outputs.retry_needed == 'true'
+    # !cancelled()가 없으면 사람이 1차 잡을 취소해도 2차가 살아나 계속 돈다(코덱스 지적).
+    if: always() && !cancelled() && needs.run-daily-scraping.outputs.retry_needed == 'true'
     runs-on: ubuntu-latest
     steps:
     # 기본값(github.sha)은 1차 잡이 방금 push한 데이터 커밋을 못 보므로 브랜치 최신 tip을 명시
@@ -235,6 +246,8 @@ jobs:
         # (2026-07-22 실측 — 1차 잡의 같은 스텝 주석 참조)
         TOKEN=$(printf '%s' "${TELEGRAM_BOT_TOKEN}" | tr -d "\r\n\"'")
         CHAT=$(printf '%s' "${TELEGRAM_CHAT_ID}" | tr -d "\r\n\"'")
-        curl -sS -X POST "https://api.telegram.org/bot${TOKEN}/sendMessage" \
+        # --fail-with-body가 없으면 curl은 HTTP 400/401/429/500도 '성공'으로 끝낸다.
+        # 토큰 오류·봇 추방·API 장애로 알림이 안 갔는데 스텝은 초록불인 무음이 된다(코덱스 지적).
+        curl -sS --fail-with-body --max-time 20 -X POST "https://api.telegram.org/bot${TOKEN}/sendMessage" \
           --data-urlencode chat_id="${CHAT}" \
           --data-urlencode text="🚨 수집 파이프라인 재시도 실행마저 도중에 실패했습니다. 로그 확인: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" > /dev/null

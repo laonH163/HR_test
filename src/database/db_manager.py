@@ -277,6 +277,28 @@ class DBManager:
         conn.close()
         return succeeded
 
+    def get_sources_collected_today(self, run_date):
+        """오늘(run_date) 실행들 중 **공고를 실제로 가져온** 소스 집합.
+
+        '검색 0건' 경고를 하루 기준으로 보정할 때 쓴다. 여기에 접속 성공(successful_sources)을
+        섞으면 안 된다 — '접속은 되는데 0건'인 소스가 스스로를 경고에서 지워 무음이 된다.
+        (2026-07-22 코덱스 교차검토 지적: WANTED가 접속 성공+0건이면 zero_platforms에
+         들어갔다가 sources_ok_today에도 들어가 상쇄돼 '전 소스 정상'이 찍혔다.
+         과거 11회 실재한 상태다 — run 49~55의 원티드·게임잡.)"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT source_counts FROM scrape_logs WHERE run_date = ?", (run_date,))
+        collected = set()
+        for row in cursor.fetchall():
+            try:
+                for s, n in json.loads(row["source_counts"] or "{}").items():
+                    if n and n > 0:
+                        collected.add(str(s).lower())
+            except Exception:
+                pass
+        conn.close()
+        return collected
+
     def get_last_collected_date(self, source):
         """해당 소스에서 **공고를 실제로 한 건이라도 가져온** 마지막 날짜. 없으면 None.
 
