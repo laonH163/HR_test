@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>채용공고 자동 수집기 — 작동 구조</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;900&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+/* ── 디자인 토큰 : 라이트/다크 자동 전환 ────────────────────────── */
+:root{
+  --bg:#f6f7f9; --surface:#ffffff; --surface-2:#f0f2f5;
+  --ink:#14171c; --ink-2:#4a5260; --ink-3:#7b8494;
+  --line:#dfe3ea; --line-2:#c7cdd8;
+  --accent:#1f5fd8; --accent-soft:#e8f0ff;
+  --collect:#2a7de1; --collect-soft:#e6f1fd;
+  --filter:#c2670c; --filter-soft:#fdf0dd;
+  --store:#2f8659; --store-soft:#e4f3ea;
+  --deliver:#7a49c9; --deliver-soft:#f0e9fc;
+  --danger:#c0392b; --danger-soft:#fbeae7;
+  --radius:10px;
+  --mono:'JetBrains Mono',ui-monospace,monospace;
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --bg:#0f1216; --surface:#171b21; --surface-2:#1e242c;
+    --ink:#e8ecf2; --ink-2:#a8b2c1; --ink-3:#7a8493;
+    --line:#2a313a; --line-2:#39424e;
+    --accent:#6f9ef0; --accent-soft:#1a2740;
+    --collect:#5fa5f0; --collect-soft:#152436;
+    --filter:#e0a355; --filter-soft:#2e2416;
+    --store:#5fbe8c; --store-soft:#14291e;
+    --deliver:#a888ea; --deliver-soft:#241c39;
+    --danger:#e8776a; --danger-soft:#301a18;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0f1216; --surface:#171b21; --surface-2:#1e242c;
+  --ink:#e8ecf2; --ink-2:#a8b2c1; --ink-3:#7a8493;
+  --line:#2a313a; --line-2:#39424e;
+  --accent:#6f9ef0; --accent-soft:#1a2740;
+  --collect:#5fa5f0; --collect-soft:#152436;
+  --filter:#e0a355; --filter-soft:#2e2416;
+  --store:#5fbe8c; --store-soft:#14291e;
+  --deliver:#a888ea; --deliver-soft:#241c39;
+  --danger:#e8776a; --danger-soft:#301a18;
+}
+:root[data-theme="light"]{
+  --bg:#f6f7f9; --surface:#ffffff; --surface-2:#f0f2f5;
+  --ink:#14171c; --ink-2:#4a5260; --ink-3:#7b8494;
+  --line:#dfe3ea; --line-2:#c7cdd8;
+  --accent:#1f5fd8; --accent-soft:#e8f0ff;
+  --collect:#2a7de1; --collect-soft:#e6f1fd;
+  --filter:#c2670c; --filter-soft:#fdf0dd;
+  --store:#2f8659; --store-soft:#e4f3ea;
+  --deliver:#7a49c9; --deliver-soft:#f0e9fc;
+  --danger:#c0392b; --danger-soft:#fbeae7;
+}
+
+*{box-sizing:border-box;margin:0;padding:0}
+body{
+  font-family:'Noto Sans KR',sans-serif;
+  background:var(--bg); color:var(--ink);
+  line-height:1.65; font-size:16px;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1120px;margin:0 auto;padding:48px 24px 80px}
+
+/* ── 헤더 ──────────────────────────────────────────────── */
+.masthead{border-bottom:2px solid var(--ink);padding-bottom:20px;margin-bottom:12px}
+.eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.14em;color:var(--ink-3);text-transform:uppercase}
+h1{font-size:34px;font-weight:900;letter-spacing:-.02em;margin:8px 0 10px;line-height:1.25}
+.lede{font-size:17px;color:var(--ink-2);max-width:74ch}
+.factbar{
+  display:flex;flex-wrap:wrap;gap:0;margin:24px 0 44px;
+  border:1px solid var(--line);border-radius:var(--radius);
+  background:var(--surface);overflow:hidden;
+}
+.fact{flex:1 1 150px;padding:14px 18px;border-right:1px solid var(--line)}
+.fact:last-child{border-right:0}
+.fact b{display:block;font-family:var(--mono);font-size:22px;font-weight:600;color:var(--ink)}
+.fact span{font-size:12.5px;color:var(--ink-3)}
+
+/* ── 섹션 ──────────────────────────────────────────────── */
+section{margin-bottom:52px}
+h2{
+  font-size:13px;font-weight:700;letter-spacing:.1em;color:var(--ink-3);
+  text-transform:uppercase;font-family:var(--mono);
+  padding-bottom:8px;border-bottom:1px solid var(--line);margin-bottom:22px;
+}
+h3{font-size:19px;font-weight:700;margin-bottom:8px;letter-spacing:-.01em}
+p.note{color:var(--ink-2);font-size:14.5px;max-width:80ch}
+
+/* ── 파이프라인 다이어그램 ──────────────────────────────── */
+.pipe{display:flex;flex-direction:column;gap:0}
+.stage{
+  display:grid;grid-template-columns:132px 1fr;gap:24px;
+  background:var(--surface);border:1px solid var(--line);
+  border-left:4px solid var(--sc,var(--accent));
+  border-radius:var(--radius);padding:20px 22px;
+}
+.stage-tag{display:flex;flex-direction:column;gap:6px}
+.stage-num{
+  font-family:var(--mono);font-size:11px;font-weight:600;letter-spacing:.1em;
+  color:var(--sc,var(--accent));
+}
+.stage-name{font-size:17px;font-weight:700;line-height:1.35}
+.stage-role{font-size:12px;color:var(--ink-3)}
+.stage-body{min-width:0}
+.stage-body>p{font-size:14.5px;color:var(--ink-2);margin-bottom:12px}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{
+  font-size:12.5px;padding:4px 10px;border-radius:100px;
+  background:var(--sc-soft,var(--accent-soft));color:var(--sc,var(--accent));
+  border:1px solid transparent;white-space:nowrap;
+}
+.chip.plain{background:var(--surface-2);color:var(--ink-2);border-color:var(--line)}
+.arrow{
+  align-self:center;color:var(--line-2);font-size:20px;line-height:1;
+  padding:6px 0;text-align:center;
+}
+.s-collect{--sc:var(--collect);--sc-soft:var(--collect-soft)}
+.s-filter{--sc:var(--filter);--sc-soft:var(--filter-soft)}
+.s-store{--sc:var(--store);--sc-soft:var(--store-soft)}
+.s-deliver{--sc:var(--deliver);--sc-soft:var(--deliver-soft)}
+
+/* ── 카드 그리드 ──────────────────────────────────────── */
+.grid{display:grid;gap:14px}
+.grid.g3{grid-template-columns:repeat(auto-fit,minmax(250px,1fr))}
+.grid.g2{grid-template-columns:repeat(auto-fit,minmax(330px,1fr))}
+.card{
+  background:var(--surface);border:1px solid var(--line);
+  border-radius:var(--radius);padding:18px 20px;
+}
+.card h4{font-size:15px;font-weight:700;margin-bottom:6px}
+.card p{font-size:13.5px;color:var(--ink-2)}
+.card .kicker{
+  font-family:var(--mono);font-size:11px;letter-spacing:.08em;
+  color:var(--ink-3);display:block;margin-bottom:8px;
+}
+
+/* ── 표 ───────────────────────────────────────────────── */
+.tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:var(--radius);background:var(--surface)}
+table{border-collapse:collapse;width:100%;min-width:620px;font-size:14px}
+th,td{padding:11px 16px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
+th{background:var(--surface-2);font-size:12px;font-weight:700;color:var(--ink-2);letter-spacing:.04em;white-space:nowrap}
+tr:last-child td{border-bottom:0}
+td code{font-family:var(--mono);font-size:12.5px;background:var(--surface-2);padding:1.5px 6px;border-radius:4px;color:var(--ink-2)}
+
+/* ── 방어선 ───────────────────────────────────────────── */
+.guards{display:grid;gap:10px}
+.guard{
+  display:grid;grid-template-columns:36px 1fr;gap:16px;align-items:start;
+  background:var(--surface);border:1px solid var(--line);
+  border-radius:var(--radius);padding:16px 18px;
+}
+.guard .no{
+  font-family:var(--mono);font-size:13px;font-weight:600;
+  color:var(--store);background:var(--store-soft);
+  border-radius:6px;text-align:center;padding:5px 0;
+}
+.guard b{display:block;font-size:14.5px;margin-bottom:3px}
+.guard span{font-size:13.5px;color:var(--ink-2)}
+
+/* ── 사례 박스 ────────────────────────────────────────── */
+.case{
+  background:var(--surface);border:1px solid var(--line);
+  border-left:4px solid var(--danger);border-radius:var(--radius);
+  padding:20px 22px;
+}
+.case .label{
+  font-family:var(--mono);font-size:11px;letter-spacing:.1em;
+  color:var(--danger);font-weight:600;margin-bottom:8px;display:block;
+}
+.case h3{margin-bottom:10px}
+.case ol{margin:12px 0 0 18px;font-size:14px;color:var(--ink-2)}
+.case ol li{margin-bottom:7px;padding-left:4px}
+.case ol li b{color:var(--ink)}
+
+footer{
+  margin-top:64px;padding-top:20px;border-top:1px solid var(--line);
+  font-size:12.5px;color:var(--ink-3);display:flex;
+  justify-content:space-between;flex-wrap:wrap;gap:10px;
+}
+footer code{font-family:var(--mono)}
+
+@media (max-width:640px){
+  .wrap{padding:32px 16px 56px}
+  h1{font-size:26px}
+  .stage{grid-template-columns:1fr;gap:14px}
+  .fact{flex-basis:50%;border-right:0;border-bottom:1px solid var(--line)}
+}
+@media print{
+  body{background:#fff}
+  .stage,.card,.guard,.case,.tablewrap{break-inside:avoid}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="masthead">
+  <div class="eyebrow">Pipeline Architecture</div>
+  <h1>게임업계 재무·회계·세무<br>채용공고 자동 수집기</h1>
+  <p class="lede">
+    사람이 매일 26곳의 채용 사이트를 돌아다니며 확인하던 일을, 매일 아침 8시에 컴퓨터가 대신 하고
+    결과만 카카오톡처럼 받아보는 구조다. 핵심은 <b>웹 스크래핑</b>(웹페이지에서 필요한 정보만 자동으로 긁어오는 기술)이며,
+    거기에 <b>걸러내기 · 쌓아두기 · 알려주기</b>가 붙는다.
+  </p>
+</header>
+
+<div class="factbar">
+  <div class="fact"><b>26</b><span>수집 대상 사이트</span></div>
+  <div class="fact"><b>59</b><span>현재 살아있는 공고</span></div>
+  <div class="fact"><b>159</b><span>누적 수집 공고</span></div>
+  <div class="fact"><b>70</b><span>등장한 회사</span></div>
+  <div class="fact"><b>75</b><span>지금까지 실행 횟수</span></div>
+  <div class="fact"><b>08:00</b><span>매일 자동 실행(KST)</span></div>
+</div>
+
+<section>
+  <h2>전체 흐름 — 4단계</h2>
+  <div class="pipe">
+
+    <div class="stage s-collect">
+      <div class="stage-tag">
+        <div class="stage-num">STEP 01</div>
+        <div class="stage-name">모은다</div>
+        <div class="stage-role">웹 스크래핑</div>
+      </div>
+      <div class="stage-body">
+        <p>
+          채용 사이트마다 화면 구조가 완전히 달라서, 사이트별로 전용 수집기를 따로 만든다.
+          대부분은 <b>주소를 호출해 HTML을 받아오는</b> 가벼운 방식이고,
+          자바스크립트로 화면을 그리는 곳(원티드)만 <b>진짜 브라우저를 띄워</b> 읽는다.
+        </p>
+        <div class="chips">
+          <span class="chip">원티드 · 브라우저 구동</span>
+          <span class="chip">사람인</span>
+          <span class="chip">잡코리아</span>
+          <span class="chip">게임잡</span>
+          <span class="chip">게임사 공식 채용페이지 22곳</span>
+          <span class="chip plain">브라우저 1개 + 나머지 동시 5갈래 병렬</span>
+        </div>
+      </div>
+    </div>
+    <div class="arrow">▼</div>
+
+    <div class="stage s-filter">
+      <div class="stage-tag">
+        <div class="stage-num">STEP 02</div>
+        <div class="stage-name">거른다</div>
+        <div class="stage-role">필터 + 분류</div>
+      </div>
+      <div class="stage-body">
+        <p>
+          긁어온 공고 대부분은 우리와 무관하다. 두 관문을 통과한 것만 남긴다 —
+          <b>① 게임업계인가 ② 재무·회계·세무 직무인가.</b>
+          통과한 공고는 본문을 읽어 경력·마감일·자격요건 같은 항목으로 <b>쪼개 정리</b>한다.
+        </p>
+        <div class="chips">
+          <span class="chip">직무 키워드 판정</span>
+          <span class="chip">게임사 판정</span>
+          <span class="chip">경력 연차 추출</span>
+          <span class="chip">마감일 추출</span>
+          <span class="chip">자격요건 · 우대사항 분리</span>
+          <span class="chip">연락처 자동 삭제</span>
+          <span class="chip plain">같은 공고 중복 병합</span>
+        </div>
+      </div>
+    </div>
+    <div class="arrow">▼</div>
+
+    <div class="stage s-store">
+      <div class="stage-tag">
+        <div class="stage-num">STEP 03</div>
+        <div class="stage-name">쌓는다</div>
+        <div class="stage-role">DB 적재 + 비교</div>
+      </div>
+      <div class="stage-body">
+        <p>
+          오늘 결과를 그냥 덮어쓰지 않고 <b>어제와 비교</b>한다. 이 비교가 이 시스템의 핵심이다 —
+          오늘 처음 보이면 <b>신규</b>, 내용이 달라졌으면 <b>수정</b>,
+          어제까진 있었는데 오늘 안 보이면 <b>마감</b>으로 판정한다.
+        </p>
+        <div class="chips">
+          <span class="chip">공고 원본</span>
+          <span class="chip">분류 결과</span>
+          <span class="chip">실행 이력</span>
+          <span class="chip plain">신규 / 수정 / 마감 판정</span>
+        </div>
+      </div>
+    </div>
+    <div class="arrow">▼</div>
+
+    <div class="stage s-deliver">
+      <div class="stage-tag">
+        <div class="stage-num">STEP 04</div>
+        <div class="stage-name">알린다</div>
+        <div class="stage-role">브리핑 + 대시보드</div>
+      </div>
+      <div class="stage-body">
+        <p>
+          결과를 두 갈래로 내보낸다. <b>텔레그램</b>으로는 오늘 달라진 것만 요약해 보내고,
+          <b>웹 대시보드</b>에는 전체 목록을 올려 언제든 검색·필터해서 볼 수 있게 한다.
+          대시보드에서는 북마크·지원상태·메모도 남길 수 있다.
+        </p>
+        <div class="chips">
+          <span class="chip">텔레그램 일일 브리핑</span>
+          <span class="chip">마감임박 알림</span>
+          <span class="chip">재공고 · 신규 진입사 배지</span>
+          <span class="chip">GitHub Pages 대시보드</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<section>
+  <h2>왜 이렇게 나눴나 — 사이트마다 방식이 다르다</h2>
+  <p class="note" style="margin-bottom:18px">
+    "그냥 다 똑같이 긁으면 되는 거 아닌가"가 가장 흔한 오해다. 실제로는 사이트가 정보를 내주는 방식이 제각각이라,
+    수집 방법도 따라서 달라진다. 무거운 방법일수록 느리고 잘 막히므로, <b>가능하면 가벼운 방법을 쓴다.</b>
+  </p>
+  <div class="tablewrap">
+    <table>
+      <thead>
+        <tr><th>수집 방식</th><th>어떤 곳에 쓰나</th><th>장점</th><th>약점</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><b>공개 API 호출</b><br><span style="color:var(--ink-3);font-size:12.5px">데이터를 통째로 받음</span></td>
+          <td>게임사 공식 채용시스템<br>(그리팅 · Greenhouse · Lever)</td>
+          <td>가장 빠르고 정확. 항목이 이미 나뉘어 있음</td>
+          <td>API가 공개된 곳에만 가능</td>
+        </tr>
+        <tr>
+          <td><b>HTML 내려받아 파싱</b><br><span style="color:var(--ink-3);font-size:12.5px">화면 코드에서 골라냄</span></td>
+          <td>사람인 · 잡코리아 · 게임잡</td>
+          <td>가볍고 빠름. 대부분 이 방식으로 해결</td>
+          <td>사이트 개편되면 그대로 깨짐</td>
+        </tr>
+        <tr>
+          <td><b>진짜 브라우저 구동</b><br><span style="color:var(--ink-3);font-size:12.5px">사람처럼 열어서 봄</span></td>
+          <td>원티드</td>
+          <td>자바스크립트로 그리는 화면도 읽음</td>
+          <td>느리고 무겁고 차단당하기 쉬움</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <h2>수집이 실패해도 데이터가 안 깨지는 이유 — 4중 방어선</h2>
+  <p class="note" style="margin-bottom:18px">
+    자동화에서 제일 위험한 사고는 <b>"못 긁었는데 공고가 사라진 줄 알고 전부 마감 처리"</b>하는 것이다.
+    그래서 "오늘 안 보임 = 마감"이라고 바로 믿지 않고, 네 겹으로 의심한다.
+  </p>
+  <div class="guards">
+    <div class="guard">
+      <div class="no">1</div>
+      <div><b>접속 실패한 사이트는 판정 제외</b>
+        <span>그 사이트가 아예 안 열렸으면, 거기 공고는 "오늘 못 본 것"이지 "없어진 것"이 아니다.</span></div>
+    </div>
+    <div class="guard">
+      <div class="no">2</div>
+      <div><b>0건이면 판정 보류</b>
+        <span>접속은 됐는데 결과가 0건이면 검색 기능이 고장 났을 가능성이 크다. 마감 처리를 미룬다.</span></div>
+    </div>
+    <div class="guard">
+      <div class="no">3</div>
+      <div><b>일부만 성공해도 판정 보류</b>
+        <span>검색어 4개 중 3개가 막히고 1개만 통과한 경우 — 다 훑었다고 볼 수 없으므로 역시 보류한다.</span></div>
+    </div>
+    <div class="guard">
+      <div class="no">4</div>
+      <div><b>한꺼번에 우수수 사라지면 정지</b>
+        <span>평소보다 수집량이 급감하거나 공고가 무더기로 사라지면, 자동 처리를 멈추고 사람에게 알린다.</span></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>매일 아침 실제로 벌어지는 일</h2>
+  <div class="grid g3">
+    <div class="card">
+      <span class="kicker">08:00 KST</span>
+      <h4>자동 시동</h4>
+      <p>GitHub의 예약 실행 기능이 정해진 시각에 깨운다. 내 컴퓨터가 꺼져 있어도 돌아간다.
+         주말과 한국 공휴일은 자동으로 건너뛴다.</p>
+    </div>
+    <div class="card">
+      <span class="kicker">실패 시</span>
+      <h4>다른 회선으로 재도전</h4>
+      <p>차단은 보통 접속 위치(IP) 단위로 걸린다. 그래서 실패한 사이트가 있으면
+         <b>새 컴퓨터·새 회선</b>에서 전체를 한 번 더 돌린다.</p>
+    </div>
+    <div class="card">
+      <span class="kicker">종료 후</span>
+      <h4>결과를 저장소에 커밋</h4>
+      <p>갱신된 DB와 대시보드 파일이 자동으로 저장되고, 웹페이지가 곧바로 새 내용으로 갱신된다.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>실제 사례 — "원티드만 매일 0건"을 추적한 과정</h2>
+  <div class="case">
+    <span class="label">2026-07-22 · 문제 해결 절차 예시</span>
+    <h3>증상만 보고 코드를 고치면 틀린다</h3>
+    <p class="note">
+      한 사이트만 계속 0건이었다. 언뜻 "수집기가 고장 났다"로 보이지만,
+      순서대로 확인해 보니 <b>코드는 멀쩡하고 접속 위치가 차단당한 것</b>이었다.
+      자동화 운영에서 원인을 좁혀가는 전형적인 순서다.
+    </p>
+    <ol>
+      <li><b>언제부터인가</b> — 실행 이력을 뒤져 정상이던 마지막 날을 찾는다. (7/16 이후 전부 0건)</li>
+      <li><b>내 컴퓨터에서도 그런가</b> — 같은 코드를 집에서 돌려본다. → 정상 작동. <b>코드 문제 아님</b>이 확정된다.</li>
+      <li><b>다른 통로는 열려 있나</b> — 같은 사이트의 다른 접근 경로도 시험한다. → 자동 실행 환경에서는 전부 막힘.</li>
+      <li><b>차단 사유가 뭔가</b> — 거절 메시지 원문을 읽는다. → 지역 차단이 아니라 <b>자동화 차단 규칙</b>에 걸린 것.</li>
+      <li><b>결론</b> — 코드로는 못 고친다. 대신 ① 고칠 수 없는 실패를 <b>매일 경고로 띄우지 않게</b> 정리하고
+          ② <b>차단이 풀리면 자동으로 알려주도록</b> 감시를 붙였다.</li>
+    </ol>
+  </div>
+</section>
+
+<section>
+  <h2>이 시스템이 만들어내는 결과물</h2>
+  <div class="grid g2">
+    <div class="card">
+      <span class="kicker">매일 아침</span>
+      <h4>텔레그램 브리핑</h4>
+      <p>오늘 새로 뜬 공고, 마감이 임박한 공고, 내용이 바뀐 공고만 추려서 한 통.
+         맨 아래에는 <b>수집 상태 점검</b>이 붙어, 문제가 없으면 "전 소스 정상" 한 줄로 끝난다.
+         <b>경고가 없으면 할 일이 없다</b>는 것이 운영 원칙이다.</p>
+    </div>
+    <div class="card">
+      <span class="kicker">항상</span>
+      <h4>웹 대시보드</h4>
+      <p>누적된 공고 전체를 회사·직무·경력·마감일로 검색하고 필터링한다.
+         관심 공고를 북마크하고 지원 상태와 메모를 남길 수 있으며, 그 기록은 파일로 백업·복원된다.</p>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <span>게임업계 재무·회계·세무 채용공고 자동 수집기 — 작동 구조</span>
+  <span>수치는 <code>2026-07-22</code> 기준 실제 DB 조회값</span>
+</footer>
+
+</div>
+</body>
+</html>
