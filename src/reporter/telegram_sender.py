@@ -159,7 +159,7 @@ class TelegramSender:
             parts.append(", ".join(s.upper() for s in others))
         return " · ".join(parts)
 
-    def build_daily_briefing_message(self, newly_added, modified_count, closed_count, active_postings, weekly_trend=None, failed_sources=None, zero_platforms=None, known_companies=None, mass_close_held=None, source_drops=None, deadline_changes=None, closed_history=None, partial_sources=None):
+    def build_daily_briefing_message(self, newly_added, modified_count, closed_count, active_postings, weekly_trend=None, failed_sources=None, zero_platforms=None, known_companies=None, mass_close_held=None, source_drops=None, deadline_changes=None, closed_history=None, partial_sources=None, known_blocked=None, recovered_known=None):
         """당일 수집된 통계 데이터 및 공고 리스트 기반 가독성 높은 텔레그램 카드 메세지 빌딩 (중복 디듀프리케이션 포함)"""
         KST = ZoneInfo("Asia/Seoul")
         run_date_env = os.getenv('RUN_DATE_STR', '')
@@ -386,6 +386,18 @@ class TelegramSender:
             # 활성으로 남으므로(좀비), 반드시 눈에 보여야 한다.
             ps = " · ".join(str(s).upper() for s in sorted(partial_sources))
             health_lines.append(f" • ⏸ 검색 일부 실패로 마감 판정 보류: <b>{ps}</b>")
+        if recovered_known:
+            # 고칠 방법이 없다고 등록해 둔 소스가 다시 수집됐다 = 차단이 풀렸다.
+            # 등록 표(src/utils/known_blocks.py)에서 지워야 하므로 조치가 필요한 알림이다.
+            rk = " · ".join(str(s).upper() for s in sorted(recovered_known))
+            health_lines.append(f" • ✅ 차단 해제 확인: <b>{rk}</b> 수집 재개 "
+                                f"— known_blocks 등록 해제 필요")
+        # 알려진 차단이 오래 이어지면 정보가 아니라 경고다(활성 공고가 좀비일 수 있음)
+        for note in (known_blocked or []):
+            if note.get("stale"):
+                health_lines.append(
+                    f" • ⚠️ <b>{str(note['source']).upper()}</b> 차단 {note['days']}일째 "
+                    f"— 남은 활성 공고가 실제로 마감됐는지 수동 확인 필요")
 
         if health_lines:
             msg_lines.append("🩺 <b>수집 상태 점검:</b>")
@@ -393,6 +405,16 @@ class TelegramSender:
             msg_lines.append("<i>※ 해당 소스는 마감 보류로 보호 중이라 데이터는 안전합니다. 같은 경고가 이틀 이상 반복되면 점검이 필요합니다.</i>")
         else:
             msg_lines.append("🩺 수집 상태: 전 소스 정상")
+
+        # 알려진 차단은 '경고'가 아니라 '정보'다 — 조치할 게 없으므로 정상 표시를 가리지
+        # 않고 아래에 한 줄로만 남긴다. 완전히 숨기면 차단 사실 자체를 잊게 된다.
+        for note in (known_blocked or []):
+            if note.get("stale"):
+                continue  # 이미 위에서 경고로 올렸다
+            days_txt = f" · {note['days']}일째" if note.get("days") is not None else ""
+            msg_lines.append(
+                f"<i> • ℹ️ {str(note['source']).upper()}: {note.get('summary', '알려진 차단')}"
+                f"{days_txt} — 조치 불요(자동 복구 감시 중)</i>")
         msg_lines.append("")
 
         msg_lines.append("💻 상세 필터 및 전체 누적 공고 조회가 필요하신 경우, 아래 실시간 대시보드 링크를 터치해 주세요.")

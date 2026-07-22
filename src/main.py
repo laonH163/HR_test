@@ -19,6 +19,7 @@ from src.classifier.hybrid_engine import HybridClassificationEngine
 from src.analyzer.delta_analyzer import DeltaAnalyzer
 from src.reporter.html_generator import HTMLGenerator
 from src.reporter.telegram_sender import TelegramSender
+from src.utils.known_blocks import ZOMBIE_ALERT_DAYS, describe, split_known_blocked
 
 # 잡코리아 공고 상세 URL에서 GI번호(공고 고유번호) 추출용 — 정의는 jobkorea_detail이 원본
 from src.scraper.jobkorea_detail import GI_READ_RE as JOBKOREA_GI_RE
@@ -165,13 +166,21 @@ def run_scraping_phase():
     else:
         failed_sources.append("official_ats(전체)")
 
+    # [알려진 차단 분리] — 새 IP로 바꿔도 어차피 막히는 소스는 재시도 대상이 아니다.
+    # 원티드가 매일 실패하는 바람에 매일 파이프라인이 통째로 두 번 돌고 있었다
+    # (당일 통계 이중 합산의 상시 원인). 수집 시도 자체는 그대로 해서 차단이 풀리면
+    # 자동 복구·자동 감지되게 두고, '재시도 예약'과 '경고 표시'에서만 뺀다.
+    known_blocked_failed, retry_targets = split_known_blocked(failed_sources)
+    if known_blocked_failed:
+        print(f"    [INFO] 알려진 차단 소스(재시도 제외): {', '.join(known_blocked_failed)}")
+
     # [실패 마커 기록] — CI가 새 러너(새 IP)로 2차 시도할지 판단하는 게이트 파일.
     # IP 차단은 러너 단위로 걸려 같은 프로세스 안의 재시도로는 복구되지 않는다(2026-07-02 run48 실측).
     failed_marker = os.path.join("data", "last_failed_sources.txt")
     try:
-        if failed_sources:
+        if retry_targets:
             with open(failed_marker, "w", encoding="utf-8") as f:
-                f.write("\n".join(sorted(set(failed_sources))) + "\n")
+                f.write("\n".join(retry_targets) + "\n")
         elif os.path.exists(failed_marker):
             os.remove(failed_marker)
     except Exception as e:
@@ -314,10 +323,13 @@ def run_scraping_phase():
     # 13. [Milestone 4] 프라이빗 텔레그램 데일리 요약 발송 가동
     #     CI 1차 시도에서 실패 소스가 있으면(SUPPRESS_ALERT_ON_SOURCE_FAILURE=1) 발송을 보류하고,
     #     새 러너(새 IP)의 재시도 실행이 최종 결과를 발송한다 — 같은 날 2통 중복 방지.
-    if failed_sources and os.getenv("SUPPRESS_ALERT_ON_SOURCE_FAILURE") == "1":
+    #     ※ 판정 기준은 failed_sources가 아니라 retry_targets다. 알려진 차단 소스는 재시도
+    #       마커에 안 들어가 2차 실행이 애초에 예약되지 않으므로, 그걸로 보류했다가는
+    #       발송할 실행이 아무도 없어 브리핑이 통째로 사라진다.
+    if retry_targets and os.getenv("SUPPRESS_ALERT_ON_SOURCE_FAILURE") == "1":
         print("\n[-] 실패 소스 감지 → 텔레그램 발송 보류 (새 러너 재시도 실행이 최종 발송)")
         print("\n==================================================")
-        print(f"[1차 시도 종료] 신규 추가: {newly_added}건 | 변동 수정: {modified_count}건 | 마감 완료: {closed_count}건 | 실패 소스: {len(set(failed_sources))}곳")
+        print(f"[1차 시도 종료] 신규 추가: {newly_added}건 | 변동 수정: {modified_count}건 | 마감 완료: {closed_count}건 | 실패 소스: {len(retry_targets)}곳")
         print("==================================================")
         return
 
@@ -337,6 +349,39 @@ def run_scraping_phase():
     recovered = (set(failed_sources) | set(zero_platforms)) & sources_ok_today
     if recovered:
         print(f"    [INFO] 오늘 타 시도에서 이미 확보된 소스는 경고 제외: {', '.join(sorted(recovered))}")
+
+    # 13-b. [알려진 차단 표시 분리] 고칠 방법이 없는 차단을 매일 경고로 띄우면 경고 전체가
+    #       무뎌진다. 평소엔 정보 한 줄로 내리되 ① 복구되면 즉시 알리고 ② 차단이
+    #       ZOMBIE_ALERT_DAYS 넘게 이어지면 다시 경고로 올린다(마감 보류로 보호되는 활성
+    #       공고가 실제로는 마감된 좀비일 수 있어 사람 확인이 필요해지는 시점).
+    known_blocked_display, display_failed_sources = split_known_blocked(display_failed_sources)
+    known_blocked_zero, display_zero_platforms = split_known_blocked(display_zero_platforms)
+    known_blocked_notes = []
+    for src in sorted(set(known_blocked_display) | set(known_blocked_zero)):
+        try:
+            last_ok = db_manager.get_last_success_date(src)
+        except Exception:
+            last_ok = None
+        days = None
+        if last_ok:
+            try:
+                days = (datetime.now(KST).date() - datetime.strptime(last_ok, "%Y-%m-%d").date()).days
+            except Exception:
+                days = None
+        known_blocked_notes.append({
+            "source": src,
+            "summary": describe(src) or "알려진 차단",
+            "last_success": last_ok,
+            "days": days,
+            "stale": days is not None and days >= ZOMBIE_ALERT_DAYS,
+        })
+    if known_blocked_notes:
+        # ※ f-string 안에 같은 따옴표를 중첩하면 Python 3.11에서 SyntaxError다(CI가 3.11)
+        summary = ", ".join("{}({}일째)".format(n["source"], n["days"]) for n in known_blocked_notes)
+        print(f"    [INFO] 알려진 차단(경고 아님): {summary}")
+
+    # 알려진 차단 소스가 다시 수집되면 표에서 지워야 하므로 눈에 띄게 알린다(자동 복구 감지).
+    recovered_known = sorted(s for s in sources_ok_today if describe(s))
 
     try:
         # 데이터베이스 전체 활성 데이터 조회
@@ -359,6 +404,7 @@ def run_scraping_phase():
         briefing_text = telegram.build_daily_briefing_message(
             newly_added, modified_count, closed_count, active_postings, weekly_trend,
             failed_sources=display_failed_sources, zero_platforms=display_zero_platforms,
+            known_blocked=known_blocked_notes, recovered_known=recovered_known,
             known_companies=known_companies,
             mass_close_held=getattr(analyzer, "last_mass_close_held", []),
             source_drops=source_drops,

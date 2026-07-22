@@ -1,0 +1,149 @@
+"""'알려진 차단' 소스 처리 검증.
+
+고칠 방법이 없는 차단(원티드 = 러너 IP 차단)을 매일 경고로 띄우면 경고가 무뎌지므로
+정보 줄로 내린다. 다만 ① 복구되면 즉시 알리고 ② 오래 이어지면 다시 경고로 올려야 한다.
+이 세 상태 전환이 정확히 동작하는지, 그리고 일반 실패 경고를 삼키지 않는지 확인한다.
+"""
+import os
+import sqlite3
+import tempfile
+import unittest
+
+from src.database.db_manager import DBManager
+from src.reporter.telegram_sender import TelegramSender
+from src.utils.known_blocks import describe, is_known_blocked, split_known_blocked
+
+
+class TestKnownBlockRegistry(unittest.TestCase):
+    def test_wanted_is_registered(self):
+        self.assertTrue(is_known_blocked("wanted"))
+        self.assertTrue(is_known_blocked("WANTED"))  # 대소문자 무관
+        self.assertIsNotNone(describe("wanted"))
+
+    def test_other_sources_not_registered(self):
+        for src in ("saramin", "jobkorea", "gamejob", "krafton"):
+            self.assertFalse(is_known_blocked(src), src)
+        self.assertIsNone(describe("saramin"))
+
+    def test_split_separates_known_from_others(self):
+        known, others = split_known_blocked(["wanted", "jobkorea", "saramin"])
+        self.assertEqual(known, ["wanted"])
+        self.assertEqual(others, ["jobkorea", "saramin"])
+
+    def test_split_handles_empty(self):
+        self.assertEqual(split_known_blocked([]), ([], []))
+        self.assertEqual(split_known_blocked(None), ([], []))
+
+
+class TestBriefingKnownBlockDisplay(unittest.TestCase):
+    def setUp(self):
+        os.environ["RUN_DATE_STR"] = "2026-07-22"
+        self.sender = TelegramSender()
+
+    def _build(self, **kwargs):
+        return self.sender.build_daily_briefing_message(0, 0, 0, [], None, **kwargs)
+
+    def test_known_block_shows_as_info_not_warning(self):
+        """평소: 정보 한 줄로만 나가고 '전 소스 정상' 표시를 가리지 않는다"""
+        text = self._build(known_blocked=[{
+            "source": "wanted", "summary": "러너 IP 차단(원티드 WAF)",
+            "last_success": "2026-07-16", "days": 6, "stale": False,
+        }])
+        self.assertIn("ℹ️ WANTED", text)
+        self.assertIn("조치 불요", text)
+        self.assertIn("6일째", text)
+        self.assertIn("🩺 수집 상태: 전 소스 정상", text)  # 경고 섹션으로 승격되지 않음
+        self.assertNotIn("⚠️ 접속 실패", text)
+
+    def test_stale_known_block_escalates_to_warning(self):
+        """차단이 오래되면 경고로 승격 — 남은 활성 공고가 좀비일 수 있어 사람 확인 필요"""
+        text = self._build(known_blocked=[{
+            "source": "wanted", "summary": "러너 IP 차단(원티드 WAF)",
+            "last_success": "2026-07-01", "days": 21, "stale": True,
+        }])
+        self.assertIn("🩺 <b>수집 상태 점검:</b>", text)
+        self.assertIn("차단 21일째", text)
+        self.assertIn("수동 확인 필요", text)
+        self.assertNotIn("조치 불요", text)  # 정보 줄과 중복 표시되지 않아야 함
+
+    def test_recovery_is_announced(self):
+        """차단이 풀리면 등록 해제가 필요하므로 눈에 띄게 알린다"""
+        text = self._build(recovered_known=["wanted"])
+        self.assertIn("✅ 차단 해제 확인", text)
+        self.assertIn("WANTED", text)
+        self.assertIn("known_blocks 등록 해제 필요", text)
+
+    def test_normal_failures_still_warn(self):
+        """알려진 차단 처리가 일반 실패 경고를 삼키면 안 된다(무음 실패 방지)"""
+        text = self._build(
+            failed_sources=["jobkorea"],
+            known_blocked=[{"source": "wanted", "summary": "러너 IP 차단",
+                            "last_success": "2026-07-16", "days": 6, "stale": False}],
+        )
+        self.assertIn("⚠️ 접속 실패", text)
+        self.assertIn("JOBKOREA", text)
+        self.assertIn("ℹ️ WANTED", text)
+
+    def test_no_known_block_keeps_previous_behavior(self):
+        text = self._build()
+        self.assertIn("🩺 수집 상태: 전 소스 정상", text)
+        self.assertNotIn("ℹ️", text)
+
+
+class TestLastSuccessDate(unittest.TestCase):
+    """차단 경과일 계산의 근거가 되는 '마지막 성공일' 조회 검증"""
+
+    def setUp(self):
+        fd, self.db_path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("""
+            CREATE TABLE scrape_logs (
+                run_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_date TEXT, newly_added INTEGER, modified_count INTEGER,
+                closed_count INTEGER, is_success INTEGER, error_log TEXT,
+                source_counts TEXT, successful_sources TEXT
+            )""")
+        rows = [
+            # (run_date, source_counts, successful_sources)
+            ("2026-07-15", '{"wanted": 1, "saramin": 10}', '["wanted", "saramin"]'),
+            ("2026-07-16", '{"wanted": 1, "saramin": 10}', '["wanted", "saramin"]'),
+            ("2026-07-17", '{"saramin": 10}', '["saramin"]'),
+            ("2026-07-22", '{"saramin": 11}', '["saramin"]'),
+        ]
+        for d, sc, ss in rows:
+            conn.execute(
+                "INSERT INTO scrape_logs (run_date, newly_added, modified_count, closed_count,"
+                " is_success, error_log, source_counts, successful_sources)"
+                " VALUES (?, 0, 0, 0, 1, NULL, ?, ?)", (d, sc, ss))
+        conn.commit()
+        conn.close()
+        self.db = DBManager(db_path=self.db_path)
+
+    def tearDown(self):
+        try:
+            os.remove(self.db_path)
+        except OSError:
+            pass
+
+    def test_returns_latest_success_date(self):
+        self.assertEqual(self.db.get_last_success_date("wanted"), "2026-07-16")
+        self.assertEqual(self.db.get_last_success_date("saramin"), "2026-07-22")
+
+    def test_returns_none_when_never_succeeded(self):
+        self.assertIsNone(self.db.get_last_success_date("gamejob"))
+
+    def test_falls_back_to_source_counts(self):
+        """successful_sources 컬럼이 없던 과거 행도 수집 건수>0이면 성공으로 본다"""
+        conn = sqlite3.connect(self.db_path)
+        conn.execute(
+            "INSERT INTO scrape_logs (run_date, newly_added, modified_count, closed_count,"
+            " is_success, error_log, source_counts, successful_sources)"
+            " VALUES ('2026-07-20', 0, 0, 0, 1, NULL, '{\"gamejob\": 16}', NULL)")
+        conn.commit()
+        conn.close()
+        self.assertEqual(self.db.get_last_success_date("gamejob"), "2026-07-20")
+
+
+if __name__ == "__main__":
+    unittest.main()

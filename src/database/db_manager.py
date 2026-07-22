@@ -277,6 +277,41 @@ class DBManager:
         conn.close()
         return succeeded
 
+    def get_last_success_date(self, source):
+        """해당 소스가 마지막으로 수집에 성공한 날짜(YYYY-MM-DD). 이력이 없으면 None.
+
+        '알려진 차단'이 며칠째 이어지는지 세는 데 쓴다. 차단이 길어지면 그 소스의 기존
+        활성 공고가 마감 보류로 계속 보호되어 좀비가 되므로 사람이 확인해야 한다.
+        successful_sources가 없는 과거 행은 source_counts의 수집 건수>0으로 폴백한다
+        (get_sources_succeeded_today와 같은 판정 기준)."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT run_date, source_counts, successful_sources FROM scrape_logs
+            ORDER BY run_date DESC, run_id DESC
+            """
+        )
+        target = str(source).lower()
+        found = None
+        for row in cursor.fetchall():
+            ok = False
+            try:
+                ok = target in {str(s).lower() for s in json.loads(row["successful_sources"] or "[]")}
+            except Exception:
+                pass
+            if not ok:
+                try:
+                    counts = {str(k).lower(): v for k, v in json.loads(row["source_counts"] or "{}").items()}
+                    ok = bool(counts.get(target))
+                except Exception:
+                    pass
+            if ok:
+                found = row["run_date"]
+                break
+        conn.close()
+        return found
+
     def get_recent_source_counts(self, runs=7):
         """최근 성공 실행들의 소스별 수집 건수 이력 — {source: [건수, ...]} (최신순).
 
