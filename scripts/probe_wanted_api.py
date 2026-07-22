@@ -51,7 +51,11 @@ def probe_search_html():
             print(f"  [{kw}] HTTP {r.status_code} len={len(r.text)} "
                   f"WAF차단={blocked} '/wd/'등장={wd_count}")
             if blocked:
-                print(f"      본문 앞부분: {r.text[:200]!r}")
+                # 차단 사유를 구분하려면 본문 전체가 필요하다. CloudFront는 지역 차단이면
+                # '...configured to block access from your country', WAF 룰이면
+                # '...not authorized' / 'Request blocked' 식으로 문구가 다르다.
+                print(f"      차단 응답 전문: {r.text!r}")
+                print(f"      응답 헤더: {dict(r.headers)}")
         except Exception as e:
             print(f"  [{kw}] 예외: {e}")
 
