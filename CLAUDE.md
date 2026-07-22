@@ -76,7 +76,23 @@ GitHub Actions로 매일 08:00 KST 정기 실행.
 - 재시도 실행 통계가 당일 합산돼 변경 건수가 부풀려진다(7/21: 17 → 19).
   상태 복구(CLOSED→ACTIVE)도 'modified'로 집계됨
 - `gamejob_281597`의 회사명이 부서명 `전략실`로 저장돼 있어 NX3 계열 카드가 하나 분리됨
-- Wanted 수집이 계속 실패 중(기존 활성 1건은 마감 보류로 보호되나 신규는 누락 가능)
+- **Wanted = GitHub Actions 러너 IP 차단(2026-07-22 진단 확정, 코드 문제 아님)**.
+  7/16 오후(run 62)부터 매일 0건 — 4개 키워드 전부 `CloudFront WAF Blocked`, 1차 러너와
+  재시도 러너 양쪽 동일. 같은 날 로컬(집 IP)에서 동일 설정으로 돌리면 4개 전부 HTTP 200
+  정상 파싱된다. `scripts/probe_wanted_api.py`(수동 dispatch 워크플로 `Debug - Wanted
+  Access Probe`)로 러너에서 3경로를 찔러본 결과 **검색 HTML·검색 API·상세 API 전부 403**
+  — 경로가 아니라 IP 단위 차단이라 스크래퍼를 API 방식으로 바꿔도 해결되지 않는다.
+  서로 다른 러너 IP 3개가 모두 막힌 것으로 보아 호스티드 러너 대역 자체가 차단 목록에
+  오른 것으로 보인다(추정). 실효 대안은 프록시 또는 self-hosted 러너뿐.
+  ※ 실손실은 현재 0건 — 원티드에 있는 게임 재무 공고가 `wanted_355934`(데브즈유나이티드
+  게임즈, 재무담당자 팀장급) **딱 1건**이고 이미 ACTIVE로 보존 중(마감 보류가 지켜줌).
+  위험은 ① 신규 공고 누락 ② 저 1건이 마감돼도 감지 못 해 좀비로 남는 것.
+  ※ 차단이 풀렸는지 재확인하려면 위 진단 워크플로를 수동 실행하면 된다(DB 미변경).
+  ※ 참고로 로컬에서 확인한 공개 API(브라우저 불필요): 검색
+  `/api/chaos/search/v1/position?query=&country=kr&years=-1&locations=all&limit=20&offset=0`,
+  상세 `/api/chaos/jobs/v1/{id}/details`(intro·main_tasks·requirements·preferred_points·
+  benefits가 필드별 분리, due_time·annual_from/to·employment_type 포함). 실행 환경만
+  뚫리면 현행 HTML 통짜 파싱보다 오염 위험이 낮은 경로다
 - 마감 보류 범위가 **소스 전체**다 — 막힌 키워드와 무관한 공고까지 보류된다.
   보수적 설계이며, 반복되면 c677fe3의 '⏸ 마감 판정 보류' 경고로 눈에 보인다
 - 프로젝트 테스트 명령이 CI와 달라(`--ignore=tests/test_wanted_debug.py` 없음)
