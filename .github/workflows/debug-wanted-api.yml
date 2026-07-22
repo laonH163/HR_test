@@ -1,0 +1,27 @@
+name: Debug - Wanted Access Probe
+
+# 수동 실행 전용 진단 워크플로. 정기 수집(daily-scraper.yml)과 완전히 분리돼 있고
+# DB·index.html을 건드리지 않는다. 러너 IP에서 원티드 API가 살아 있는지만 확인한다.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe-wanted:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository code
+      uses: actions/checkout@v4
+
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install requests
+      run: pip install requests
+
+    - name: Probe Wanted access paths
+      run: python scripts/probe_wanted_api.py
