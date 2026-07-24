@@ -252,6 +252,8 @@ def run_scraping_phase():
     source_counts = Counter(p["source"] for p in all_postings)
     print(f"\n[헬스체크] 소스별 수집 건수: {dict(source_counts)}")
     print(f"[헬스체크] 성공적으로 완료된 수집 출처 목록: {sorted(list(successful_sources))}")
+    # ※ db_manager.PLATFORM_SEARCH_SOURCES와 같은 집합이어야 한다 — 마감 유예의
+    #   '공정한 미관측일' 판정(count_fair_miss_days)이 이 구분에 의존한다
     platform_sources = ["wanted", "saramin", "jobkorea", "gamejob"]
     zero_platforms = [s for s in platform_sources if source_counts.get(s, 0) == 0]
     if zero_platforms:
