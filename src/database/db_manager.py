@@ -2,6 +2,7 @@ import sqlite3
 import os
 import json
 import re
+from datetime import date, timedelta
 
 from src.utils.jdtext import body_degraded
 
@@ -349,30 +350,52 @@ class DBManager:
         conn.close()
         return n
 
-    def get_recent_source_counts(self, runs=7):
-        """최근 성공 실행들의 소스별 수집 건수 이력 — {source: [건수, ...]} (최신순).
+    def get_recent_source_counts(self, before_date, days=7):
+        """달력 기준 최근 days일([before_date-days, before_date) 구간)의 소스별
+        일별 수집 건수 이력 — {source: [건수, ...]} (최신 날짜순).
 
-        플랫폼 수집량이 평소 대비 급감했는지 판정하는 기준선. source_counts 컬럼이
-        비어 있는 과거 실행은 건너뛴다."""
+        플랫폼 수집량이 평소 대비 급감했는지 판정하는 기준선.
+        '최근 N회 실행'이 아니라 '달력 날짜' 기준이다 — 같은 날 재실행이 많으면
+        그날 수치가 기준선을 독점해 다음 날 급감을 못 잡던 문제의 교정
+        (2026-07-22 실측: 검증 반복으로 기준선 7칸이 전부 그날 하루로 채워졌다).
+        - 같은 날 여러 실행은 소스별 '최댓값' 하나로 축약 — 일부 소스만 수집된
+          부분 실행이 나중에 돌아도 정상 수집값을 덮지 않는다
+        - 그날 로그에 소스가 없으면 0이 아니라 결측(표본 수에 안 들어간다)
+        - 실행이 없던 날짜를 메우려고 구간 밖 오래된 로그를 끌어오지 않는다"""
+        start_date = (date.fromisoformat(before_date) - timedelta(days=days)).isoformat()
         conn = self.get_connection()
         cursor = conn.cursor()
         cursor.execute(
             """
-            SELECT source_counts FROM scrape_logs
-            WHERE is_success = 1 AND source_counts IS NOT NULL AND source_counts != '{}'
-            ORDER BY run_id DESC LIMIT ?
+            SELECT run_date, source_counts FROM scrape_logs
+            WHERE is_success = 1 AND run_date >= ? AND run_date < ?
+              AND source_counts IS NOT NULL AND source_counts != '{}'
             """,
-            (runs,),
+            (start_date, before_date),
         )
-        history = {}
+        daily = {}
         for row in cursor.fetchall():
             try:
                 counts = json.loads(row["source_counts"])
             except Exception:
                 continue
+            # 유효 JSON이지만 객체가 아닌 행([]·null·숫자)이 섞이면 .items()에서
+            # 터져 그날 급감 감지 전체가 꺼진다 — 행 단위로 건너뛴다(코덱스 지적)
+            if not isinstance(counts, dict):
+                continue
+            bucket = daily.setdefault(row["run_date"], {})
             for source, n in counts.items():
-                history.setdefault(source, []).append(n)
+                # 0건·비정상 값은 기준선을 낮추지 않는다 (source_counts는 Counter라
+                # 0이 저장될 일이 없지만 방어적으로 걸러둔다)
+                if isinstance(n, bool) or not isinstance(n, (int, float)) or n <= 0:
+                    continue
+                source = str(source).lower()
+                bucket[source] = max(bucket.get(source, n), n)
         conn.close()
+        history = {}
+        for run_date in sorted(daily, reverse=True):
+            for source, n in daily[run_date].items():
+                history.setdefault(source, []).append(n)
         return history
 
     def get_all_active_postings(self):

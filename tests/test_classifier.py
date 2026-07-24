@@ -548,7 +548,7 @@ class TestClassifierAndDelta(unittest.TestCase):
             "closed_count": 0, "is_success": 1, "error_log": None,
             "source_counts": {"saramin": 9, "jobkorea": 13},
         })
-        history = self.db_manager.get_recent_source_counts(7)
+        history = self.db_manager.get_recent_source_counts(before_date="2026-07-10", days=7)
         self.assertEqual(history.get("saramin"), [9])
         self.assertEqual(history.get("jobkorea"), [13])
 

@@ -74,6 +74,10 @@ def run_scraping_phase():
     reporter = HTMLGenerator(db_manager)
     telegram = TelegramSender()
 
+    # 파이프라인 기준 날짜를 시작 시 한 번만 확정 — 자정 경계를 넘겨도 급감 기준선
+    # 비교 날짜와 scrape_logs 저장 날짜가 어긋나지 않게 한다
+    run_date = datetime.now(KST).strftime("%Y-%m-%d")
+
     all_postings = []
 
     # [안전 재시도 데코레이터 함수] - WAF, 임시 커넥션 불안정 시 최대 3회 재시도 (수집 누락 원천 방어)
@@ -231,12 +235,13 @@ def run_scraping_phase():
     if zero_platforms:
         print(f"    [WARN] 플랫폼 소스 0건 감지(스크래퍼 점검 필요): {', '.join(zero_platforms)}", file=sys.stderr)
 
-    # 8-4. [수집량 급감 감지] — 오늘 로그를 적재하기 전의 이력(=어제까지)과 비교.
-    #      플랫폼이 7일 평균 대비 30% 미만이면 검색 열화 의심(서서히 죽는 소스 조기 발견).
+    # 8-4. [수집량 급감 감지] — 오늘을 제외한 달력 7일([오늘-7, 오늘)) 일별 기준선과 비교.
+    #      플랫폼이 최근 7일 평균 대비 30% 미만이면 검색 열화 의심(서서히 죽는 소스 조기 발견).
     #      0건은 별도의 '0건 플랫폼' 경고가 담당하므로 여기서 제외한다.
+    #      같은 날 재실행은 하루 1개 값으로 축약되므로 len(past)>=3은 '관측 3일 이상'을 뜻한다.
     source_drops = {}
     try:
-        history = db_manager.get_recent_source_counts(7)
+        history = db_manager.get_recent_source_counts(before_date=run_date, days=7)
         for s in platform_sources:
             past = history.get(s, [])
             if len(past) >= 3:
@@ -245,6 +250,11 @@ def run_scraping_phase():
                 if avg >= 3 and 0 < today_n < avg * 0.3:
                     source_drops[s] = {"today": today_n, "avg": avg}
                     print(f"    [WARN] {s} 수집량 급감: 오늘 {today_n}건 (최근 평균 {avg:.1f}건)", file=sys.stderr)
+            elif source_counts.get(s, 0) > 0:
+                # 콜드 스타트·7일 초과 공백 뒤에는 기준선이 모자라 급감 비교가 조용히
+                # 쉰다 — 로그에라도 남겨 감시 공백을 보이게 한다(코덱스 지적).
+                # 오늘 0건인 소스는 '0건 플랫폼'·알려진 차단이 따로 다루므로 제외.
+                print(f"    [INFO] {s} 급감 기준선 부족(관측 {len(past)}/3일) — 이번 실행은 급감 비교 생략")
     except Exception as e:
         print(f"    [WARN] 수집량 추세 비교 실패: {e}", file=sys.stderr)
 
@@ -326,7 +336,7 @@ def run_scraping_phase():
             # 마감 보류가 며칠 이어지면 좀비 ACTIVE가 쌓이는데, 기록이 없으면 추적 불가.
             error_parts.append("검색 일부 실패(마감 보류): " + ", ".join(sorted(partial_sources)))
         log_entry = {
-            "run_date": datetime.now(KST).strftime("%Y-%m-%d"),
+            "run_date": run_date,  # 파이프라인 시작 시 확정한 날짜 (급감 기준선과 동일 기준)
             "newly_added": newly_added,
             "modified_count": modified_count,
             "closed_count": closed_count,
