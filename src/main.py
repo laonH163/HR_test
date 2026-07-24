@@ -58,6 +58,25 @@ def dedupe_jobkorea_gi(postings):
     return deduped
 
 
+def watchdog_ping(context):
+    """외부 감시(dead man's switch)에 '오늘 시스템이 정상 동작했다'는 신호를 보낸다.
+
+    호출 지점은 두 부류다 — ① 브리핑 실제 발송 성공 ② 의도된 휴일 스킵.
+    주말·공휴일 스킵도 정상 동작으로 신고해야 감시 서비스가 그날 '신호 없음'
+    오경보를 내지 않는다. HEALTHCHECK_PING_URL 미설정이면 아무것도 하지 않는다
+    (선택 기능 — 설정 방법은 docs/WATCHDOG_SETUP.md)."""
+    ping_url = (os.getenv("HEALTHCHECK_PING_URL") or "").strip().strip("\"'")
+    if not ping_url:
+        return
+    try:
+        import requests
+        requests.get(ping_url, timeout=10)
+        print(f"    [OK] watchdog ping 발송 완료 ({context})")
+    except Exception as e:
+        # ping 실패는 파이프라인과 무관 — 신호가 끊기면 감시 서비스 쪽에서 알려준다
+        print(f"    [WARN] watchdog ping 실패({context}): {e}", file=sys.stderr)
+
+
 def run_scraping_phase():
     """Milestone 1 & 2: 멀티 소스 공고 수집, 정밀 하이브리드 분류 및 델타 변동 분석"""
     print("==================================================")
@@ -503,7 +522,13 @@ def run_scraping_phase():
         )
 
         # 최종 메시지 봇 발송
-        telegram.send_formatted_message(briefing_text)
+        briefing_sent = telegram.send_formatted_message(briefing_text)
+
+        # [watchdog ping] 브리핑이 '실제 발송된' 경우에만 외부 감시 서비스에 신호를 보낸다.
+        # 워크플로 자체가 안 뜨거나 러너가 강제 종료되면 같은 워크플로 안의 크래시 알림은
+        # 침묵한다 — '오늘 브리핑이 왔는가'는 밖에서만 감시할 수 있다(dead man's switch).
+        if briefing_sent:
+            watchdog_ping("오늘 브리핑 발송 완료")
     except Exception as e:
         print(f"    [ERR] 텔레그램 요약 발송 실패: {e}", file=sys.stderr)
 
@@ -534,6 +559,7 @@ def main():
         # 1. 주말 체크 (5=토요일, 6=일요일)
         if today.weekday() in [5, 6]:
             print(f"📢 [SKIP] 오늘은 주말({today.strftime('%A')})입니다. 수집과 알림을 모두 건너뜁니다.")
+            watchdog_ping("주말 스킵 — 정상 동작")
             sys.exit(0)
 
         # 2. 한국 법정 공휴일 체크 (pytimekr 라이브러리 연동)
@@ -542,6 +568,7 @@ def main():
             # 오늘 날짜가 공휴일 목록에 포함되는지 검사 (date 타입 매칭)
             if today.date() in holidays:
                 print(f"📢 [SKIP] 오늘은 대한민국 법정 공휴일({today.strftime('%Y-%m-%d')})입니다. 수집과 알림을 건너뜁니다.")
+                watchdog_ping("공휴일 스킵 — 정상 동작")
                 sys.exit(0)
         except Exception as e:
             # 혹시 라이브러리 조회 실패 시 수집이 아예 멈추는 걸 예방하기 위한 안전 통과
