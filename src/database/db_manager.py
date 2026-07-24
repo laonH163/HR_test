@@ -6,6 +6,11 @@ from datetime import date, timedelta
 
 from src.utils.jdtext import body_degraded
 
+# 재무 키워드 검색형 플랫폼 소스 — '성공 + 0건'이 검색 오동작 신호인 부류.
+# (기업 어댑터는 공고 0건이 '진짜 없음'일 수 있어 판정 기준이 다르다)
+# main.py의 급감/0건 경고 대상 목록과 같은 집합이어야 한다.
+PLATFORM_SEARCH_SOURCES = {"wanted", "saramin", "jobkorea", "gamejob"}
+
 class DBManager:
     def __init__(self, db_path="data/scrap_master.db"):
         self.db_path = db_path
@@ -219,6 +224,53 @@ class DBManager:
         conn.commit()
         conn.close()
         return updated
+
+    def count_fair_miss_days(self, source, after_date, before_date):
+        """(after_date, before_date) 사이(양끝 제외)에 해당 소스가 '정상 동작한' 실행일 수.
+
+        마감 유예의 '공정한 미관측일' 계산용 — 소스가 정상 동작했는데도 공고가 안
+        보인 날만 마감의 증거로 센다. 달력일로 세면 주말·공휴일(실행 없음)·소스
+        실패일이 유예를 소진해, 금요일 관측 공고가 월요일 첫 검색 누락만으로 즉시
+        마감되는 구멍이 생긴다(2026-07-24 코덱스 교차검토 지적).
+        - 플랫폼 검색 소스: 그날 수집>0이어야 공정 (0건은 검색 오동작 의심 —
+          suspect 보류와 같은 논리라 미관측 증거로 안 친다)
+        - 기업 어댑터 등: 그날 접속 성공(successful_sources)이면 공정. 공고 0건이
+          '진짜 없음'일 수 있는 소스라 수집>0을 요구하면 마지막 공고가 내려간 뒤
+          영구 보류(좀비)가 된다. 과거 행에 컬럼이 없으면 수집>0으로 폴백."""
+        source = str(source).lower()
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT run_date, source_counts, successful_sources FROM scrape_logs
+            WHERE is_success = 1 AND run_date > ? AND run_date < ?
+            """,
+            (after_date, before_date),
+        )
+        fair_days = set()
+        for row in cursor.fetchall():
+            try:
+                counts = json.loads(row["source_counts"] or "{}")
+            except Exception:
+                counts = {}
+            if not isinstance(counts, dict):
+                counts = {}
+            collected = counts.get(source, 0)
+            if source in PLATFORM_SEARCH_SOURCES:
+                fair = isinstance(collected, (int, float)) and collected > 0
+            else:
+                try:
+                    succ = json.loads(row["successful_sources"] or "[]")
+                except Exception:
+                    succ = []
+                if isinstance(succ, list) and succ:
+                    fair = source in {str(s).lower() for s in succ}
+                else:
+                    fair = isinstance(collected, (int, float)) and collected > 0
+            if fair:
+                fair_days.add(row["run_date"])
+        conn.close()
+        return len(fair_days)
 
     def upsert_job_category(self, category):
         """AI 분류 데이터 Upsert"""

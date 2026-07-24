@@ -20,14 +20,24 @@ class TestClassifierAndDelta(unittest.TestCase):
                 pass
 
     def _age_postings(self, ids, last_seen="2026-01-01"):
-        """마감 유예(CLOSE_GRACE_DAYS)를 통과하도록 관측일을 과거로 밀어준다.
+        """마감 유예(CLOSE_GRACE_DAYS)를 통과하도록 관측일을 과거로 밀고, 그 다음 날
+        해당 소스들이 정상 동작한 실행 이력을 넣어 '공정한 미관측일'을 만들어준다.
         유예 도입 전의 '즉시 마감' 시나리오를 테스트하려면 필요하다."""
         conn = self.db_manager.get_connection()
         conn.executemany(
             "UPDATE job_postings SET last_seen_date = ? WHERE id = ?",
             [(last_seen, i) for i in ids])
+        placeholders = ",".join("?" * len(ids))
+        sources = [r["source"] for r in conn.execute(
+            f"SELECT DISTINCT source FROM job_postings WHERE id IN ({placeholders})", list(ids))]
         conn.commit()
         conn.close()
+        self.db_manager.insert_scrape_log({
+            "run_date": "2026-01-02", "newly_added": 0, "modified_count": 0,
+            "closed_count": 0, "is_success": 1, "error_log": None,
+            "source_counts": {s: 1 for s in sources},
+            "successful_sources": sources,
+        })
 
     def test_work_type_classification(self):
         """근무 형태 정밀 3단 분류 검증"""

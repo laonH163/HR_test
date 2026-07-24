@@ -28,7 +28,12 @@ class TestDropDetect(unittest.TestCase):
         """오늘 0건은 급감이 아니라 별도의 '0건 플랫폼' 경고 담당."""
         drops, insufficient = detect_source_drops({"saramin": [10, 10, 10]}, {"saramin": 0}, PLATFORMS)
         self.assertEqual(drops, {})
-        self.assertEqual(insufficient, [])  # 0건 소스는 기준선 부족 정보에도 안 올린다
+        self.assertEqual(insufficient, [])
+        # 기준선 부족(2일) + 오늘 0건 조합에서도 부족 목록에 올리지 않는다 —
+        # 0건은 '0건 플랫폼' 경고 담당이라 여기서 겹치면 소음이 된다
+        drops, insufficient = detect_source_drops({"saramin": [10, 10]}, {"saramin": 0}, PLATFORMS)
+        self.assertEqual(drops, {})
+        self.assertEqual(insufficient, [])
 
     def test_small_average_is_skipped(self):
         """평소 평균이 MIN_AVG 미만(원티드 1건급)이면 30% 계산이 무의미 — 건너뛴다."""

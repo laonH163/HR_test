@@ -3,11 +3,14 @@ from datetime import date
 
 from src.utils.timeutil import now_kst_str, today_kst_str
 
-# 마감 확정에 필요한 연속 미관측 일수. 검색 결과가 실행마다 출렁여 공고가 하루
-# 빠졌다 돌아오는 플랩(2026-07-22 실측: 사람인 run 77에서 3건이 마감 1분 뒤 부활)을
-# 막는다 — 마지막 관측일로부터 이 일수가 지나야 CLOSED로 확정한다.
-# 같은 날 재실행에서 빠진 것(관측일=오늘)은 어떤 경우에도 마감되지 않는다.
-# 대가: 진짜 마감의 감지·알림이 최대 (이 값 - 1)일 늦어진다.
+# 마감 확정에 필요한 '미관측 증거일' 수 — 오늘 + 공정한 미관측일 (CLOSE_GRACE_DAYS - 1)일.
+# 검색 결과가 실행마다 출렁여 공고가 하루 빠졌다 돌아오는 플랩(2026-07-22 실측:
+# 사람인 run 77에서 3건이 마감 1분 뒤 부활)을 막는다.
+# '공정한 미관측일' = 그 소스가 정상 동작했는데도 공고가 안 보인 실행일
+# (db_manager.count_fair_miss_days). 달력일로 세면 주말·공휴일·소스 실패일이
+# 유예를 소진해 월요일 첫 검색 누락만으로 즉시 마감된다(코덱스 지적) — 실행이
+# 없던 날은 증거가 아니다. 같은 날 재실행 누락(관측일=오늘)은 어떤 경우에도 마감 금지.
+# 대가: 진짜 마감의 감지·알림이 정상 운영 기준 1일(실행 공백만큼 더) 늦어진다.
 CLOSE_GRACE_DAYS = 2
 
 class DeltaAnalyzer:
@@ -63,6 +66,9 @@ class DeltaAnalyzer:
         except ValueError:
             run_day = None  # 기준일이 손상되면 유예 판정 불가 — 아래에서 전부 보류(보수적)
 
+        # (source, 마지막 관측일)별 공정 미관측일 수 캐시 — 공고마다 DB를 다시 읽지 않는다
+        fair_miss_cache = {}
+
         closed_count = 0
         closed_details = []
         held_by_suspect = 0
@@ -107,9 +113,10 @@ class DeltaAnalyzer:
                 continue
 
             if job_id not in today_scraped_ids:
-                # [마감 유예] 마지막 관측일로부터 CLOSE_GRACE_DAYS 미만이면 보류.
+                # [마감 유예] 오늘 미관측 + 마지막 관측일 이후 '공정한 미관측일'이
+                # (CLOSE_GRACE_DAYS - 1)일 이상 쌓여야 마감을 확정한다.
                 # 검색 결과 변동으로 하루 빠졌다 돌아오는 공고(사람인 플랩)의
-                # 마감 오보·부활 반복을 막는다. 같은 날 재실행 누락(관측일=오늘)은 항상 보류.
+                # 마감 오보·부활 반복을 막는다. 같은 날 재실행 누락은 항상 보류.
                 last_seen = job["last_seen_date"]
                 days_missed = None
                 if run_day is not None and last_seen:
@@ -117,15 +124,24 @@ class DeltaAnalyzer:
                         days_missed = (run_day - date.fromisoformat(last_seen)).days
                     except ValueError:
                         days_missed = None  # 손상된 관측일 — 아래에서 오늘로 재기록(자가 복구)
-                if days_missed is None:
-                    # 관측 이력이 없거나(컬럼 도입 전 데이터) 손상 — 오늘을 기점으로
-                    # 유예를 새로 시작한다. 즉시 마감보다 보수적인 쪽을 택한다.
+                if days_missed is None or days_missed < 0:
+                    # 관측 이력이 없거나(컬럼 도입 전 데이터) 손상·미래 날짜 — 오늘을
+                    # 기점으로 유예를 새로 시작한다. 즉시 마감보다 보수적인 쪽.
+                    # 미래 날짜를 그대로 두면 그 날짜가 지날 때까지 마감이 봉쇄된다(코덱스 지적).
                     cursor.execute(
                         "UPDATE job_postings SET last_seen_date = ? WHERE id = ?",
                         (run_date, job_id))
                     self.last_grace_held += 1
                     continue
-                if days_missed < CLOSE_GRACE_DAYS:
+                if days_missed == 0:
+                    # 오늘 앞선 실행에서 관측됨 — 같은 날 플랩, 무조건 보류
+                    self.last_grace_held += 1
+                    continue
+                cache_key = (source, last_seen)
+                if cache_key not in fair_miss_cache:
+                    fair_miss_cache[cache_key] = self.db_manager.count_fair_miss_days(
+                        source, last_seen, run_date)
+                if fair_miss_cache[cache_key] < CLOSE_GRACE_DAYS - 1:
                     self.last_grace_held += 1
                     continue
 

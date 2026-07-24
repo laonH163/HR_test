@@ -44,6 +44,15 @@ class TestCloseGrace(unittest.TestCase):
         conn.commit()
         conn.close()
 
+    def _log_fair_day(self, run_date, source_counts):
+        """해당 날짜에 소스가 정상 동작한 실행 이력('공정한 미관측일' 재료)을 넣는다."""
+        self.db_manager.insert_scrape_log({
+            "run_date": run_date, "newly_added": 0, "modified_count": 0,
+            "closed_count": 0, "is_success": 1, "error_log": None,
+            "source_counts": source_counts,
+            "successful_sources": sorted(source_counts.keys()),
+        })
+
     def _status(self, job_id):
         conn = self.db_manager.get_connection()
         row = conn.execute("SELECT status, last_seen_date FROM job_postings WHERE id = ?", (job_id,)).fetchone()
@@ -73,13 +82,56 @@ class TestCloseGrace(unittest.TestCase):
         self.assertEqual(self._status("saramin_a")[0], "ACTIVE")
 
     def test_grace_days_miss_is_closed(self):
-        """마지막 관측이 CLOSE_GRACE_DAYS일 전이면 정상 마감된다."""
+        """마지막 관측 이후 소스가 정상 동작한 날(공정 미관측일)이 있고 오늘도
+        미관측이면 정상 마감된다 — 증거 2일 확보."""
         self.db_manager.upsert_job_posting(make_posting("saramin_old"))
-        self._set_last_seen("saramin_old", "2026-07-22")  # 2일 전
+        self._set_last_seen("saramin_old", "2026-07-22")  # 2일 전 관측
+        self._log_fair_day("2026-07-23", {"saramin": 5})  # 어제 사람인 정상 동작 + 미관측
         closed, details = self._analyze({"saramin_1", "saramin_2", "saramin_3"})
         self.assertEqual(closed, 1)
         self.assertEqual(details[0]["id"], "saramin_old")
         self.assertEqual(self._status("saramin_old")[0], "CLOSED")
+
+    def test_weekend_gap_does_not_consume_grace(self):
+        """금요일 관측 → 주말 실행 없음 → 월요일 첫 검색 누락은 달력상 3일이지만
+        보류돼야 한다 — 실행이 없던 날은 미관측의 증거가 아니다(코덱스 지적 재현).
+        화요일에도 미관측이면(월요일이 공정 미관측일) 그때 마감된다."""
+        self.db_manager.upsert_job_posting(make_posting("saramin_fri"))
+        self._set_last_seen("saramin_fri", "2026-07-17")  # 금요일 관측
+        # 월요일(7/20): 주말 이틀은 실행 자체가 없었다 — 즉시 마감되면 안 된다
+        closed, _ = self.analyzer.analyze_closed_postings(
+            {"saramin_1", "saramin_2", "saramin_3"},
+            successful_sources={"saramin"}, run_date="2026-07-20")
+        self.assertEqual(closed, 0)
+        self.assertEqual(self._status("saramin_fri")[0], "ACTIVE")
+        # 화요일(7/21): 월요일에 사람인이 정상 동작했는데도 안 보였다 → 증거 성립, 마감
+        self._log_fair_day("2026-07-20", {"saramin": 5})
+        closed, _ = self.analyzer.analyze_closed_postings(
+            {"saramin_1", "saramin_2", "saramin_3"},
+            successful_sources={"saramin"}, run_date="2026-07-21")
+        self.assertEqual(closed, 1)
+        self.assertEqual(self._status("saramin_fri")[0], "CLOSED")
+
+    def test_broken_source_day_is_not_fair_evidence(self):
+        """중간 날에 사람인이 0건(검색 오동작 의심)이었다면 그날은 미관측 증거가
+        아니다 — 유예가 소진되지 않고 보류가 유지된다."""
+        self.db_manager.upsert_job_posting(make_posting("saramin_x"))
+        self._set_last_seen("saramin_x", "2026-07-22")
+        self._log_fair_day("2026-07-23", {"gamejob": 5})  # 사람인은 이날 0건(결측)
+        closed, _ = self._analyze({"saramin_1", "saramin_2", "saramin_3"})
+        self.assertEqual(closed, 0)
+        self.assertEqual(self._status("saramin_x")[0], "ACTIVE")
+
+    def test_future_last_seen_self_heals(self):
+        """미래 날짜 관측일(시계 오차·수동 편집)은 그대로 두면 그 날짜가 지날 때까지
+        마감이 봉쇄된다 — 오늘로 재기록해 자가 복구한다(코덱스 지적)."""
+        self.db_manager.upsert_job_posting(make_posting("saramin_future"))
+        self._set_last_seen("saramin_future", "2030-01-01")
+        closed, _ = self._analyze({"saramin_1", "saramin_2", "saramin_3"})
+        self.assertEqual(closed, 0)
+        status, last_seen = self._status("saramin_future")
+        self.assertEqual(status, "ACTIVE")
+        self.assertEqual(last_seen, RUN_DATE)
 
     def test_null_last_seen_starts_grace_today(self):
         """관측 이력이 없는 공고(컬럼 도입 전 데이터)는 즉시 마감하지 않고

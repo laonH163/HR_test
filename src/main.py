@@ -70,11 +70,13 @@ def watchdog_ping(context):
         return
     try:
         import requests
-        requests.get(ping_url, timeout=10)
+        # 404/500 응답을 성공으로 찍으면 'URL이 틀렸는데 [OK]'가 된다(코덱스 지적)
+        requests.get(ping_url, timeout=10).raise_for_status()
         print(f"    [OK] watchdog ping 발송 완료 ({context})")
     except Exception as e:
-        # ping 실패는 파이프라인과 무관 — 신호가 끊기면 감시 서비스 쪽에서 알려준다
-        print(f"    [WARN] watchdog ping 실패({context}): {e}", file=sys.stderr)
+        # ping 실패는 파이프라인과 무관 — 신호가 끊기면 감시 서비스 쪽에서 알려준다.
+        # 예외 본문에 ping URL(비밀 취급)이 섞일 수 있어 예외 타입만 기록한다(코덱스 지적).
+        print(f"    [WARN] watchdog ping 실패({context}): {type(e).__name__}", file=sys.stderr)
 
 
 def run_scraping_phase():
