@@ -313,7 +313,8 @@ def run_scraping_phase():
             closed_count, closed_details = analyzer.analyze_closed_postings(
                 today_ids, successful_sources,
                 suspect_sources=set(zero_platforms) | partial_sources,
-                collected_counts=dict(source_counts))
+                collected_counts=dict(source_counts),
+                run_date=run_date)
             for closed in closed_details:
                 print(f"    -> 마감 감지 완료: [{closed['company_name']}] {closed['title']}")
         print(f"    -> 마감 공고 처리 결과: 총 {closed_count} 건 종료 감지")

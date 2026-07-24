@@ -19,6 +19,16 @@ class TestClassifierAndDelta(unittest.TestCase):
             except PermissionError:
                 pass
 
+    def _age_postings(self, ids, last_seen="2026-01-01"):
+        """마감 유예(CLOSE_GRACE_DAYS)를 통과하도록 관측일을 과거로 밀어준다.
+        유예 도입 전의 '즉시 마감' 시나리오를 테스트하려면 필요하다."""
+        conn = self.db_manager.get_connection()
+        conn.executemany(
+            "UPDATE job_postings SET last_seen_date = ? WHERE id = ?",
+            [(last_seen, i) for i in ids])
+        conn.commit()
+        conn.close()
+
     def test_work_type_classification(self):
         """근무 형태 정밀 3단 분류 검증"""
         # 1) 풀재택 케이스
@@ -356,6 +366,8 @@ class TestClassifierAndDelta(unittest.TestCase):
         self.assertEqual(closed_count, 0)
 
         # 2) 충분히 수집된 상태(3건 이상)에서, 누락된 aaa 공고만 정상 마감되어야 함
+        #    (마감 유예를 통과하도록 aaa의 관측일을 과거로 설정)
+        self._age_postings(["wanted_aaa"])
         today_ids = {"wanted_bbb", "wanted_ccc", "wanted_ddd"}
         closed_count, closed_details = self.analyzer.analyze_closed_postings(today_ids)
         self.assertEqual(closed_count, 1)
@@ -466,6 +478,8 @@ class TestClassifierAndDelta(unittest.TestCase):
         self.db_manager.upsert_job_posting(make_posting("krafton_999", "krafton"))
 
         # 오늘 수집: 둘 다 미수집, 두 소스 모두 '성공' — 단 gamejob은 0건(suspect)
+        #  (둘 다 마감 유예는 통과한 상태로 만들어 suspect 보류만을 검증한다)
+        self._age_postings(["gamejob_282441", "krafton_999"])
         today_ids = {"saramin_1", "saramin_2", "saramin_3"}
         closed_count, closed_details = self.analyzer.analyze_closed_postings(
             today_ids, successful_sources={"gamejob", "krafton", "saramin"},
@@ -498,6 +512,8 @@ class TestClassifierAndDelta(unittest.TestCase):
         for jid, src in [("com2us_1", "com2us"), ("com2us_2", "com2us"), ("krafton_1", "krafton")]:
             self.db_manager.upsert_job_posting(make_posting(jid, src))
 
+        # 전부 마감 유예는 통과한 상태로 만들어 일괄 소멸 가드만을 검증한다
+        self._age_postings(["com2us_1", "com2us_2", "krafton_1"])
         today_ids = {"saramin_1", "saramin_2", "saramin_3"}
         closed_count, closed_details = self.analyzer.analyze_closed_postings(
             today_ids,

@@ -98,6 +98,7 @@ class DBManager:
         self._add_column_if_not_exists("job_postings", "deadline", "TEXT")  # 마감일 YYYY-MM-DD (D-N 배지 환산, 상시채용은 NULL)
         self._add_column_if_not_exists("scrape_logs", "source_counts", "TEXT")  # 소스별 수집 건수 JSON (수집량 급감 감지용)
         self._add_column_if_not_exists("scrape_logs", "successful_sources", "TEXT")  # 성공 소스 JSON (하루 기준 경고 보정용)
+        self._add_column_if_not_exists("job_postings", "last_seen_date", "TEXT")  # 마지막 관측일 YYYY-MM-DD (마감 유예 판정용)
 
     def _add_column_if_not_exists(self, table_name, column_name, column_type):
         """기존 테이블에 컬럼이 없을 때 안전하게 ALTER TABLE을 가동하는 마이그레이션 도우미"""
@@ -192,6 +193,32 @@ class DBManager:
         conn.commit()
         conn.close()
         return is_modified, existing is None
+
+    def mark_postings_seen(self, ids, run_date):
+        """오늘 관측된 공고들의 last_seen_date를 스탬프 (마감 유예 판정의 근거).
+
+        upsert는 내용이 바뀐 공고만 갱신하므로 '관측됐지만 변경 없음'은 DB에 흔적이
+        없다 — 마감 유예(연속 미관측 일수)를 세려면 관측 자체를 따로 기록해야 한다.
+        검색 결과 변동으로 하루 빠졌다 돌아오는 공고(사람인 플랩)를 즉시 마감하지
+        않기 위한 기반이다."""
+        ids = list(ids)
+        if not ids:
+            return 0
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        updated = 0
+        chunk_size = 500  # SQLite 바인딩 변수 한도(기본 999) 방어
+        for i in range(0, len(ids), chunk_size):
+            chunk = ids[i:i + chunk_size]
+            placeholders = ",".join("?" * len(chunk))
+            cursor.execute(
+                f"UPDATE job_postings SET last_seen_date = ? WHERE id IN ({placeholders})",
+                [run_date] + chunk,
+            )
+            updated += cursor.rowcount
+        conn.commit()
+        conn.close()
+        return updated
 
     def upsert_job_category(self, category):
         """AI 분류 데이터 Upsert"""
