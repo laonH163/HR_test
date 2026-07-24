@@ -99,6 +99,16 @@ class TestSourceCountBaseline(unittest.TestCase):
         self.assertNotIn("jobkorea", history)
         self.assertNotIn("gamejob", history)
 
+    def test_partial_only_day_lowers_baseline_known_limitation(self):
+        """[알려진 한계의 특성화 테스트] 하루 종일 부분 실행만 있었던 날은 그 낮은
+        값이 기준선에 그대로 들어간다 — 최댓값 축약은 '완전 실행'을 식별하지 못한다
+        (2026-07-24 코덱스 지적, CLAUDE.md '남은 알려진 문제' 기록).
+        이 동작을 고치면 이 테스트를 의도에 맞게 갱신할 것."""
+        self._log("2026-07-20", {"saramin": 10, "jobkorea": 5})
+        self._log("2026-07-21", {"saramin": 2})  # 이날은 부분 실행 1회뿐
+        history = self.db_manager.get_recent_source_counts(before_date="2026-07-22", days=7)
+        self.assertEqual(history.get("saramin"), [2, 10])  # 낮은 값이 기준선 진입
+
     def test_non_dict_json_row_is_skipped(self):
         """유효 JSON이지만 객체가 아닌 행([]·null·숫자)은 행 단위로 건너뛴다 —
         한 행 오염이 그날 급감 감지 전체를 죽이면 안 된다(코덱스 지적)."""
